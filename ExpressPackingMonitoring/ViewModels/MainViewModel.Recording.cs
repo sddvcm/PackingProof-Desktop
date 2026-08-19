@@ -202,7 +202,9 @@ namespace ExpressPackingMonitoring.ViewModels
                                     dur);
                         }
 
-                        // 画中画合成：直接输出 .pip.mp4，成功后更新 DB、删除原始 MKV 和扫描 MKV。
+                        // 画中画合成：直接输出 .pip.mp4。
+                        // 成功后更新 DB 指向 PIP MP4，同时将原始主 MKV 和扫描 MKV 也转成 MP4 保留
+                        // （目录里保留 3 个视频：主.mp4、扫描_scan.mp4、PIP.pip.mp4）。
                         // 失败时保留原始 MKV，留给 QueuePostStopMux 批量转码。
                         bool pipDone = false;
                         if (Config.EnablePipComposite
@@ -215,13 +217,31 @@ namespace ExpressPackingMonitoring.ViewModels
                             string? pipResult = CompositePipVideo(filePath, pendingScanFile, Config.PipPosition);
                             if (!string.IsNullOrEmpty(pipResult) && File.Exists(pipResult))
                             {
-                                // PIP 合成成功：更新 DB 指向 PIP MP4，删除原始 MKV 和扫描 MKV
+                                // PIP 合成成功：DB 指向 PIP MP4
                                 _db?.UpdateVideoFilePath(filePath, pipResult);
-                                try { File.Delete(filePath); } catch { }
-                                try { File.Delete(pendingScanFile); } catch { }
+
+                                // 将原始主录制 MKV 转成 MP4（保留打包过程视频），转完后删 MKV
+                                string ffmpegPath = FindFFmpeg();
+                                if (!string.IsNullOrEmpty(ffmpegPath))
+                                {
+                                    bool mainOk = RemuxMkvToMp4Silent(filePath, ffmpegPath);
+                                    RuntimeLog.Info("PIP", $"Main MKV -> MP4: {(mainOk ? "ok" : "failed, keeping MKV")} file={Path.GetFileName(filePath)}");
+
+                                    // 将扫描录制 MKV 转成 MP4（保留面单视频），转完后删 MKV
+                                    bool scanOk = RemuxMkvToMp4Silent(pendingScanFile, ffmpegPath);
+                                    RuntimeLog.Info("PIP", $"Scan MKV -> MP4: {(scanOk ? "ok" : "failed, keeping MKV")} file={Path.GetFileName(pendingScanFile)}");
+                                }
+                                else
+                                {
+                                    // 没有 FFmpeg，保留原始 MKV
+                                    RuntimeLog.Warn("PIP", "FFmpeg not found for sidecar remux, keeping original MKVs");
+                                }
+
+                                // 清理音频 sidecar
                                 DeleteAudioTempFile(audioFilePath);
                                 DeleteEmbeddedAudioMarker(filePath);
-                                RuntimeLog.Info("PIP", $"PIP done, DB updated to {Path.GetFileName(pipResult)}, original MKV deleted");
+
+                                RuntimeLog.Info("PIP", $"PIP done, DB={Path.GetFileName(pipResult)}, 3 videos in directory");
                                 pipDone = true;
                             }
                             else
@@ -2760,6 +2780,44 @@ namespace ExpressPackingMonitoring.ViewModels
                 return true;
             }
             RuntimeLog.Warn("MkvToMp4", $"Video-only fallback remux failed file={Path.GetFileName(mkvPath)}, exit={(exited ? proc.ExitCode : -999)}, stderr={TrimForRuntimeLog(stderrOut)}");
+            try { if (File.Exists(mp4Path)) File.Delete(mp4Path); } catch { }
+            return false;
+        }
+
+        /// <summary>
+        /// 纯视频 remux，不更新 DB（用于 PIP 成功后将原始 MKV 转成 MP4 保留）。
+        /// DB 指向 .pip.mp4，原始主/扫描 MKV 各自转成 .mp4 保留在目录里。
+        /// </summary>
+        private bool RemuxMkvToMp4Silent(string mkvPath, string ffmpegPath)
+        {
+            if (string.IsNullOrEmpty(mkvPath) || !File.Exists(mkvPath)) return false;
+            if (string.IsNullOrEmpty(ffmpegPath)) return false;
+            string mp4Path = Path.ChangeExtension(mkvPath, ".mp4");
+            try { if (File.Exists(mp4Path)) File.Delete(mp4Path); } catch { }
+            var psi = new ProcessStartInfo
+            {
+                FileName = ffmpegPath,
+                Arguments = BuildFallbackMkvToMp4Args(mkvPath, mp4Path),
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true
+            };
+            using var proc = Process.Start(psi);
+            if (proc == null) return false;
+            bool exited = WaitForProcessExit(proc, GetMediaProcessTimeoutMs(mkvPath), CancellationToken.None, out var stderr);
+            bool ok = exited
+                && proc.ExitCode == 0
+                && File.Exists(mp4Path)
+                && new FileInfo(mp4Path).Length > 0;
+            if (ok)
+            {
+                try { File.Delete(mkvPath); } catch { }
+                DeleteEmbeddedAudioMarker(mkvPath);
+                RuntimeLog.Info("MkvToMp4", $"Silent remux ok: {Path.GetFileName(mkvPath)} -> {Path.GetFileName(mp4Path)}");
+                return true;
+            }
+            RuntimeLog.Warn("MkvToMp4", $"Silent remux failed: {Path.GetFileName(mkvPath)}, exit={(exited ? proc.ExitCode : -999)}, stderr={TrimForRuntimeLog(stderr)}");
             try { if (File.Exists(mp4Path)) File.Delete(mp4Path); } catch { }
             return false;
         }
