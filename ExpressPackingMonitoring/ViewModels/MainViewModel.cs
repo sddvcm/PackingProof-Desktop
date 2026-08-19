@@ -64,6 +64,17 @@ namespace ExpressPackingMonitoring.ViewModels
         private DateTime _lastScanFrameTime = DateTime.MinValue;
         private bool _scanCameraEverConnected = false;
 
+        // 扫描摄像头独立录制：扫码触发后扫描摄像头立刻开始录制（包含面单画面）。
+        private Process _scanFfmpegProcess;
+        private Stream _scanFfmpegStdin;
+        private CancellationTokenSource _scanRecordingCts;
+        private string _scanRecordingFilePath;
+        private int _scanRecordWidth;
+        private int _scanRecordHeight;
+        private int _scanRecordFps;
+        // 扫码触发时"开始录制"语音播报的延迟（秒），0=立刻播报（手动按钮触发）
+        private double _recordingSpeechDelaySeconds = 0;
+
         private BlockingCollection<Mat> _videoWriteQueue;
         private Task _writeTask;
         private Task _lastFinalizeTask;
@@ -252,6 +263,7 @@ namespace ExpressPackingMonitoring.ViewModels
         private ScanRecord _currentScanRecord;
         private long _currentRecordId; 
         private string _currentVideoFilePath;  // 当前录制文件路径
+        private string _currentOrderFolder;    // 当前单号文件夹路径（所有文件存此目录下）
         private string _currentArchivePath = ""; // 当前录像对应的网络归档目标根（为空表示无需归档）
         private string _currentVideoCodec;
         private string _currentVideoEncoder;
@@ -1310,6 +1322,18 @@ namespace ExpressPackingMonitoring.ViewModels
             Debug.WriteLine($"[Zoom] 扫码事件触发: ID={upperResult}, ZoomEnabled={Config.EnableSmartZoom}, Delay={Config.ZoomDelaySeconds}");
             StartInputCooldown();
 
+            // 单号查重拦截：关闭允许重复时，已存在单号直接弹窗拦截，不启动录制。
+            if (!Config.AllowDuplicateTrackingNumber && _db != null && _db.OrderIdExistsRecent(upperResult))
+            {
+                PublishScannerAlert(
+                    $"duplicate-order-number-blocked:{upperResult}",
+                    $"已拦截重复单号：{upperResult}",
+                    DefaultSpeechCatalog.DuplicateOrderNumber,
+                    repeatCount: 3);
+                ShowToast($"重复单号已拦截：{upperResult}", ToastSeverity.Warning);
+                return;
+            }
+
             CurrentOrderId = upperResult;
             if (IsRecording) _stopReason = "扫码切换";
             if (!await _recorderLock.WaitAsync(0)) return;
@@ -1322,6 +1346,15 @@ namespace ExpressPackingMonitoring.ViewModels
                     PauseSpeechForRecording();
                     RuntimeLog.Info("Recording", "连续扫码切换，暂缓音视频合成，等待 stop 或手动停止");
                     await InternalStopRecordingAsync();
+                }
+                // 扫码触发时设置语音延迟，让扫描摄像头先录到面单画面再播报"开始录制"。
+                _recordingSpeechDelaySeconds = Config.RecordingSpeechDelaySeconds;
+                // 双摄像头模式下立刻启动扫描摄像头录制（从扫码瞬间开始，包含面单画面）。
+                if (Config.EnableDualCamera && Config.EnableScanCameraRecording)
+                {
+                    string scanFolder = Path.Combine(ResolveBestStoragePlan().WorkingRootPath, upperResult);
+                    if (!Directory.Exists(scanFolder)) Directory.CreateDirectory(scanFolder);
+                    StartScanCameraRecording(upperResult, scanFolder);
                 }
                 await InternalStartRecordingAsync();
                 QueuePrintedRefundCheck(upperResult, CurrentMode);
@@ -4162,11 +4195,253 @@ namespace ExpressPackingMonitoring.ViewModels
                     _scanLatestFrame?.Dispose();
                     _scanLatestFrame = frame;
                 }
+
+                // 如果扫描摄像头正在录制，把当前帧写入 FFmpeg 管道。
+                FeedFrameToScanRecorder(frame);
             }
             catch (Exception ex)
             {
                 frame.Dispose();
                 RuntimeLog.Error("ScanCamera", "HandleScanCameraFrame failed", ex);
+            }
+        }
+
+        /// <summary>
+        /// 启动扫描摄像头独立录制。扫码触发后立刻调用，从扫码瞬间开始录制。
+        /// </summary>
+        private void StartScanCameraRecording(string orderId, string orderFolder)
+        {
+            if (!Config.EnableDualCamera || !Config.EnableScanCameraRecording)
+                return;
+
+            try
+            {
+                StopScanCameraRecording();
+
+                int srcW, srcH;
+                lock (_scanFrameLock)
+                {
+                    srcW = _scanLatestFrame?.Width ?? 0;
+                    srcH = _scanLatestFrame?.Height ?? 0;
+                }
+                if (srcW <= 0 || srcH <= 0)
+                {
+                    RuntimeLog.Warn("ScanRecording", "No scan frame available, skipping scan recording");
+                    return;
+                }
+
+                // 解析目标分辨率
+                int targetW, targetH;
+                switch ((Config.ScanCameraResolution ?? "480p").ToLowerInvariant())
+                {
+                    case "720p":
+                        targetW = 1280; targetH = 720; break;
+                    case "original":
+                        targetW = srcW; targetH = srcH; break;
+                    default:
+                        targetW = 640; targetH = 480; break;
+                }
+                // 保持宽高比，按目标高度缩放
+                double scale = (double)targetH / srcH;
+                targetW = (int)(srcW * scale);
+                if (targetW % 2 != 0) targetW++;
+                _scanRecordWidth = targetW;
+                _scanRecordHeight = targetH;
+                _scanRecordFps = _actualCameraFps > 0 ? _actualCameraFps : Config.Fps > 0 ? Config.Fps : 15;
+
+                string fileName = $"{orderId}_{DateTime.Now:yyyyMMdd_HHmmss}_scan.mkv";
+                _scanRecordingFilePath = Path.Combine(orderFolder, fileName);
+
+                string ffmpegPath = FindFFmpeg();
+                if (string.IsNullOrEmpty(ffmpegPath))
+                {
+                    RuntimeLog.Warn("ScanRecording", "FFmpeg not found, skipping scan recording");
+                    return;
+                }
+
+                string args = BuildFFmpegArgs(_scanRecordWidth, _scanRecordHeight, _scanRecordFps,
+                    _scanRecordingFilePath, GetCpuEncoder(), false, GetVideoCqp());
+                RuntimeLog.Info("ScanRecording", $"Start scan recording: {_scanRecordWidth}x{_scanRecordHeight}@{_scanRecordFps}, file={fileName}");
+
+                var psi = new ProcessStartInfo
+                {
+                    FileName = ffmpegPath,
+                    Arguments = args,
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                    RedirectStandardInput = true,
+                    RedirectStandardError = true
+                };
+
+                _scanRecordingCts = new CancellationTokenSource();
+                _scanFfmpegProcess = Process.Start(psi);
+                if (_scanFfmpegProcess == null)
+                {
+                    RuntimeLog.Error("ScanRecording", "Failed to start FFmpeg for scan recording");
+                    return;
+                }
+                _scanFfmpegStdin = _scanFfmpegProcess.StandardInput.BaseStream;
+
+                // 在指定时长后自动停止
+                int duration = Math.Max(1, Config.ScanRecordDurationSeconds);
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(duration), _scanRecordingCts.Token);
+                        var dispatcher = Application.Current?.Dispatcher;
+                        if (dispatcher != null)
+                            _ = dispatcher.BeginInvoke(new Action(() => StopScanCameraRecording()));
+                        else
+                            StopScanCameraRecording();
+                    }
+                    catch (OperationCanceledException) { }
+                });
+            }
+            catch (Exception ex)
+            {
+                RuntimeLog.Error("ScanRecording", "StartScanCameraRecording failed", ex);
+                StopScanCameraRecording();
+            }
+        }
+
+        /// <summary>
+        /// 把一帧扫描画面写入扫描录制 FFmpeg 管道（如果正在录制）。
+        /// </summary>
+        private void FeedFrameToScanRecorder(Mat frame)
+        {
+            if (_scanFfmpegProcess == null || _scanFfmpegProcess.HasExited || _scanFfmpegStdin == null)
+                return;
+            if (_scanRecordingCts?.IsCancellationRequested == true)
+                return;
+            if (frame == null || frame.IsDisposed || frame.Empty())
+                return;
+
+            try
+            {
+                int expectedBytes = _scanRecordWidth * _scanRecordHeight * 3;
+                byte[] buffer = new byte[expectedBytes];
+
+                using Mat resized = new Mat();
+                Cv2.Resize(frame, resized, new OpenCvSharp.Size(_scanRecordWidth, _scanRecordHeight));
+                if (resized.IsContinuous() && resized.Type() == MatType.CV_8UC3)
+                {
+                    Marshal.Copy(resized.Data, buffer, 0, expectedBytes);
+                    _scanFfmpegStdin.Write(buffer, 0, expectedBytes);
+                }
+            }
+            catch (Exception ex)
+            {
+                RuntimeLog.Warn("ScanRecording", $"FeedFrameToScanRecorder write failed: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 停止扫描摄像头录制，关闭 FFmpeg 管道。
+        /// </summary>
+        private void StopScanCameraRecording()
+        {
+            try
+            {
+                _scanRecordingCts?.Cancel();
+            }
+            catch { }
+
+            try
+            {
+                if (_scanFfmpegStdin != null)
+                {
+                    try { _scanFfmpegStdin.Flush(); _scanFfmpegStdin.Close(); } catch { }
+                    _scanFfmpegStdin = null;
+                }
+            }
+            catch { }
+
+            if (_scanFfmpegProcess != null)
+            {
+                try
+                {
+                    if (!_scanFfmpegProcess.HasExited)
+                    {
+                        _scanFfmpegProcess.WaitForExit(3000);
+                        if (!_scanFfmpegProcess.HasExited)
+                        {
+                            _scanFfmpegProcess.Kill();
+                        }
+                    }
+                    string stderr = _scanFfmpegProcess.StandardError?.ReadToEnd() ?? "";
+                    if (!string.IsNullOrWhiteSpace(stderr))
+                        RuntimeLog.Info("ScanRecording", $"FFmpeg stderr: {stderr.Substring(0, Math.Min(500, stderr.Length))}");
+                }
+                catch { }
+                try { _scanFfmpegProcess.Dispose(); } catch { }
+                _scanFfmpegProcess = null;
+            }
+
+            // 如果启用了画中画，合成 PIP 视频
+            string scanFile = _scanRecordingFilePath;
+            _scanRecordingFilePath = null;
+            if (!string.IsNullOrEmpty(scanFile) && File.Exists(scanFile) && Config.EnablePipComposite && !string.IsNullOrEmpty(_currentVideoFilePath))
+            {
+                _ = Task.Run(() => CompositePipVideo(_currentVideoFilePath, scanFile, Config.PipPosition));
+            }
+        }
+
+        /// <summary>
+        /// 用 FFmpeg overlay 滤镜将扫描视频叠加到主视频角落，生成 _pip.mkv。
+        /// </summary>
+        private void CompositePipVideo(string mainVideo, string scanVideo, string position)
+        {
+            try
+            {
+                string ffmpegPath = FindFFmpeg();
+                if (string.IsNullOrEmpty(ffmpegPath))
+                {
+                    RuntimeLog.Warn("PIP", "FFmpeg not found, skipping PIP composite");
+                    return;
+                }
+                if (!File.Exists(mainVideo) || !File.Exists(scanVideo))
+                {
+                    RuntimeLog.Warn("PIP", $"Missing input: main={File.Exists(mainVideo)}, scan={File.Exists(scanVideo)}");
+                    return;
+                }
+
+                // 扫描画面缩到主视频宽度的 1/4
+                string overlay = position switch
+                {
+                    "TopLeft" => "x=20:y=20",
+                    "BottomLeft" => "x=20:y=H-h-20",
+                    "BottomRight" => "x=W-w-20:y=H-h-20",
+                    _ => "x=W-w-20:y=20", // TopRight
+                };
+
+                string pipFile = Path.ChangeExtension(mainVideo, ".pip.mkv");
+                string args = $"-y -i \"{mainVideo}\" -i \"{scanVideo}\" " +
+                    $"-filter_complex \"[1:v]scale=iw/4:ih/4[bg];[0:v][bg]overlay={overlay}\" " +
+                    $"-c:v libx264 -preset fast -crf 25 -c:a copy \"{pipFile}\"";
+
+                RuntimeLog.Info("PIP", $"Compositing: {Path.GetFileName(pipFile)}");
+
+                var psi = new ProcessStartInfo
+                {
+                    FileName = ffmpegPath,
+                    Arguments = args,
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                    RedirectStandardError = true
+                };
+                var proc = Process.Start(psi);
+                if (proc == null) return;
+                string stderr = proc.StandardError.ReadToEnd() ?? "";
+                proc.WaitForExit(60000);
+                if (proc.ExitCode != 0)
+                    RuntimeLog.Warn("PIP", $"FFmpeg overlay exit={proc.ExitCode}, stderr={stderr.Substring(0, Math.Min(500, stderr.Length))}");
+                else
+                    RuntimeLog.Info("PIP", $"PIP composite done: {Path.GetFileName(pipFile)}");
+            }
+            catch (Exception ex)
+            {
+                RuntimeLog.Error("PIP", "CompositePipVideo failed", ex);
             }
         }
 

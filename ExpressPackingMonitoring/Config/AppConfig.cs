@@ -164,6 +164,23 @@ namespace ExpressPackingMonitoring.Config
         public string ScanNetworkCameraUrl { get; set; } = "";
         public string ScanNetworkCameraRtspTransport { get; set; } = "tcp";
 
+        // 扫描摄像头独立录制：扫码触发后扫描摄像头立刻开始录制，包含面单画面。
+        public bool EnableScanCameraRecording { get; set; } = true;
+        // 扫描摄像头录制时长（秒），从扫码瞬间起算。
+        public int ScanRecordDurationSeconds { get; set; } = 3;
+        // 扫描摄像头录制分辨率："480p" | "720p" | "original"
+        public string ScanCameraResolution { get; set; } = "480p";
+        // 主录像"开始录制"语音播报延迟（秒），让扫描摄像头先录到面单画面再开始打包。
+        public double RecordingSpeechDelaySeconds { get; set; } = 2.0;
+
+        // 画中画合成：主录制结束后将扫描摄像头视频叠加到主视频角落。
+        public bool EnablePipComposite { get; set; } = false;
+        // 画中画位置："TopLeft" | "TopRight" | "BottomLeft" | "BottomRight"
+        public string PipPosition { get; set; } = "TopRight";
+
+        // 单号查重拦截：关闭时同一单号不可重复录制，扫码命中已存在单号则弹窗拦截。
+        public bool AllowDuplicateTrackingNumber { get; set; } = true;
+
         // 存储不同摄像头的配置：Key 为 MonikerString
         public Dictionary<string, CameraSettings> CameraConfigs { get; set; } = new();
 

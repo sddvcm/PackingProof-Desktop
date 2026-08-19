@@ -1250,6 +1250,118 @@
                                         </StackPanel>
                                     </Grid>
 
+                                    <Grid Style="{StaticResource SettingRowStyle}"
+                                          IsEnabled="{Binding IsChecked, ElementName=EnableDualCameraCheckBox, TargetNullValue=False}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="24"/>
+                                            <ColumnDefinition Width="260"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Margin="0,0,16,0">
+                                            <TextBlock Text="扫描录制分辨率" Style="{StaticResource FieldLabelStyle}"/>
+                                            <TextBlock Text="扫描摄像头独立录制视频的分辨率"
+                                                       Style="{StaticResource FieldHintStyle}"/>
+                                        </StackPanel>
+                                        <ComboBox x:Name="ScanCameraResolutionComboBox"
+                                                  Grid.Column="2"
+                                                  SelectedValue="{Binding Config.ScanCameraResolution}"
+                                                  SelectedValuePath="Tag"
+                                                  VerticalAlignment="Center">
+                                            <ComboBoxItem Content="480P（推荐）" Tag="480p"/>
+                                            <ComboBoxItem Content="720P" Tag="720p"/>
+                                            <ComboBoxItem Content="原始分辨率" Tag="original"/>
+                                        </ComboBox>
+                                    </Grid>
+
+                                    <Grid Style="{StaticResource SettingRowStyle}"
+                                          IsEnabled="{Binding IsChecked, ElementName=EnableDualCameraCheckBox, TargetNullValue=False}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="24"/>
+                                            <ColumnDefinition Width="260"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Margin="0,0,16,0">
+                                            <TextBlock Text="扫描录制时长（秒）" Style="{StaticResource FieldLabelStyle}"/>
+                                            <TextBlock Text="扫码触发后扫描摄像头录制多少秒"
+                                                       Style="{StaticResource FieldHintStyle}"/>
+                                        </StackPanel>
+                                        <TextBox x:Name="ScanRecordDurationTextBox"
+                                                 Grid.Column="2"
+                                                 Text="{Binding Config.ScanRecordDurationSeconds, UpdateSourceTrigger=PropertyChanged}"
+                                                 VerticalAlignment="Center"
+                                                 MaxLength="2"/>
+                                    </Grid>
+
+                                    <Grid Style="{StaticResource SettingRowStyle}"
+                                          IsEnabled="{Binding IsChecked, ElementName=EnableDualCameraCheckBox, TargetNullValue=False}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="24"/>
+                                            <ColumnDefinition Width="260"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Margin="0,0,16,0">
+                                            <TextBlock Text="录制语音延迟（秒）" Style="{StaticResource FieldLabelStyle}"/>
+                                            <TextBlock Text="扫码后延迟播报'开始录制'语音，让扫描摄像头先录到面单画面"
+                                                       Style="{StaticResource FieldHintStyle}"/>
+                                        </StackPanel>
+                                        <TextBox x:Name="RecordingSpeechDelayTextBox"
+                                                 Grid.Column="2"
+                                                 Text="{Binding Config.RecordingSpeechDelaySeconds, UpdateSourceTrigger=PropertyChanged}"
+                                                 VerticalAlignment="Center"
+                                                 MaxLength="3"/>
+                                    </Grid>
+
+                                    <Grid Style="{StaticResource SettingRowStyle}"
+                                          IsEnabled="{Binding IsChecked, ElementName=EnableDualCameraCheckBox, TargetNullValue=False}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="24"/>
+                                            <ColumnDefinition Width="260"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Margin="0,0,16,0">
+                                            <TextBlock Text="画中画合成" Style="{StaticResource FieldLabelStyle}"/>
+                                            <TextBlock Text="将扫描视频叠加到主视频角落生成 PIP 视频"
+                                                       Style="{StaticResource FieldHintStyle}"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2" Orientation="Horizontal">
+                                            <CheckBox x:Name="EnablePipCheckBox"
+                                                      IsChecked="{Binding Config.EnablePipComposite}"
+                                                      VerticalAlignment="Center"
+                                                      HorizontalAlignment="Left"
+                                                      Style="{StaticResource ToggleSwitchStyle}"/>
+                                            <ComboBox x:Name="PipPositionComboBox"
+                                                      Margin="16,0,0,0"
+                                                      SelectedValue="{Binding Config.PipPosition}"
+                                                      SelectedValuePath="Tag"
+                                                      VerticalAlignment="Center"
+                                                      MinWidth="100">
+                                                <ComboBoxItem Content="左上" Tag="TopLeft"/>
+                                                <ComboBoxItem Content="右上" Tag="TopRight"/>
+                                                <ComboBoxItem Content="左下" Tag="BottomLeft"/>
+                                                <ComboBoxItem Content="右下" Tag="BottomRight"/>
+                                            </ComboBox>
+                                        </StackPanel>
+                                    </Grid>
+
+                                    <Grid Style="{StaticResource SettingRowStyle}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="24"/>
+                                            <ColumnDefinition Width="260"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Margin="0,0,16,0">
+                                            <TextBlock Text="允许重复录制" Style="{StaticResource FieldLabelStyle}"/>
+                                            <TextBlock Text="关闭后同一单号不可重复录制，扫码命中已存在单号将提示拦截"
+                                                       Style="{StaticResource FieldHintStyle}"/>
+                                        </StackPanel>
+                                        <CheckBox x:Name="AllowDuplicateTrackingNumberCheckBox"
+                                                  Grid.Column="2"
+                                                  IsChecked="{Binding Config.AllowDuplicateTrackingNumber}"
+                                                  VerticalAlignment="Center"
+                                                  HorizontalAlignment="Left"
+                                                  Style="{StaticResource ToggleSwitchStyle}"/>
+                                    </Grid>
+
                                     <Grid x:Name="NetworkCameraPanel"
                                           Style="{StaticResource SettingRowStyle}"
                                           Visibility="Collapsed">

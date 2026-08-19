@@ -26,6 +26,9 @@ namespace ExpressPackingMonitoring.ViewModels
         {
             if (!IsRecording || _isDisposed) return;
 
+            // 停止扫描摄像头独立录制（如果在运行）
+            StopScanCameraRecording();
+
             IsBusy = true;
             BusyText = _shutdownRequested ? "正在关闭程序..." : "正在停止...";
             IsRecording = false; // 1. 立即改变 UI 状态
@@ -571,19 +574,20 @@ namespace ExpressPackingMonitoring.ViewModels
                     return;
                 }
 
-                string dateFolder = Path.Combine(baseFolder, DateTime.Now.ToString("yyyy-MM-dd"));
+                string orderFolder = Path.Combine(baseFolder, CurrentOrderId);
                 try
                 {
-                    if (!Directory.Exists(dateFolder)) Directory.CreateDirectory(dateFolder);
+                    if (!Directory.Exists(orderFolder)) Directory.CreateDirectory(orderFolder);
                 }
                 catch (Exception ex)
                 {
-                    ShowToast($"无法创建日期目录: {ex.Message}", ToastSeverity.Error);
+                    ShowToast($"无法创建单号目录: {ex.Message}", ToastSeverity.Error);
                     return;
                 }
+                _currentOrderFolder = orderFolder;
 
                 string fileName = $"{CurrentOrderId}_{DateTime.Now:yyyyMMdd_HHmmss}_{CurrentMode}.mkv";
-                string filePath = Path.Combine(dateFolder, fileName);
+                string filePath = Path.Combine(orderFolder, fileName);
                 string archivePath = string.IsNullOrWhiteSpace(_currentArchivePath)
                     ? ""
                     : ArchivePathBuilder.BuildLocalRecordingArchivePath(
@@ -716,7 +720,22 @@ namespace ExpressPackingMonitoring.ViewModels
                 RuntimeLog.Info("Recording", $"Database record inserted id={_currentRecordId}, file={Path.GetFileName(filePath)}");
 
                 ShowToast("开始录像", ToastSeverity.Information);
-                Speak(DefaultSpeechCatalog.StartRecording, cancelPrevious: false);
+                // 扫码触发时延迟播报"开始录制"，让扫描摄像头先录到面单画面。
+                double speechDelay = _recordingSpeechDelaySeconds;
+                _recordingSpeechDelaySeconds = 0;
+                if (speechDelay > 0)
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        try { await Task.Delay(TimeSpan.FromSeconds(speechDelay)); }
+                        catch { return; }
+                        Speak(DefaultSpeechCatalog.StartRecording, cancelPrevious: false);
+                    });
+                }
+                else
+                {
+                    Speak(DefaultSpeechCatalog.StartRecording, cancelPrevious: false);
+                }
                 if (_currentScanRecord != null)
                 {
                     _currentScanRecord.IsActive = false;
