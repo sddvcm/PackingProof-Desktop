@@ -854,15 +854,11 @@ namespace ExpressPackingMonitoring.UI
                 using var probeSource = new NetworkCameraSource(
                     url,
                     AppConfig.NormalizeNetworkTransport(Config.NetworkCameraRtspTransport),
-                    width: 1280,
-                    height: 720,
-                    fps: 15);
-                await probeSource.ProbeAsync(TimeSpan.FromSeconds(5));
-                ScanNetworkCameraStatusText.Text = "✓ 扫描网络摄像头连接成功";
-            }
-            catch (Exception ex)
-            {
-                ScanNetworkCameraStatusText.Text = $"连接失败：{ex.Message}";
+                    Config.Fps > 0 ? Config.Fps : 15);
+                bool connected = await probeSource.StartAsync();
+                ScanNetworkCameraStatusText.Text = connected
+                    ? $"连接成功：{probeSource.ActualWidth}×{probeSource.ActualHeight} @ {probeSource.ActualFps} FPS"
+                    : $"连接失败：{probeSource.LastError ?? "无法获取画面信息"}";
             }
             finally
             {
