@@ -177,8 +177,8 @@ namespace ExpressPackingMonitoring.Config
         public bool EnablePipComposite { get; set; } = false;
         // 画中画位置："TopLeft" | "TopRight" | "BottomLeft" | "BottomRight"
         public string PipPosition { get; set; } = "TopRight";
-        // 画中画扫描画面相对主视频宽度占比（0.1=很窄,1.0=全屏），默认 0.25（1/4）
-        public double PipScale { get; set; } = 0.25;
+        // 画中画扫描画面相对主视频宽度占比（0.1=很窄,1.0=全屏），默认 0.5（1/2）
+        public double PipScale { get; set; } = 0.5;
 
         // 单号查重拦截：关闭时同一单号不可重复录制，扫码命中已存在单号则弹窗拦截。
         public bool AllowDuplicateTrackingNumber { get; set; } = true;

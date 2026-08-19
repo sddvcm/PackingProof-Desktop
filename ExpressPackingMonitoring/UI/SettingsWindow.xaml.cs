@@ -616,10 +616,10 @@ namespace ExpressPackingMonitoring.UI
             ScanCameraRow.Visibility = config.EnableDualCamera ? Visibility.Visible : Visibility.Collapsed;
             ScanNetworkCameraPanel.Visibility = Visibility.Collapsed;
 
-            // 同步画中画尺寸比例（按 Tag 字符串匹配最近值，默认 0.25）
+            // 同步画中画尺寸比例（按 Tag 字符串匹配最近值，默认 0.5）
             if (PipScaleComboBox != null)
             {
-                double pipScale = config.PipScale > 0 && config.PipScale <= 1 ? config.PipScale : 0.25;
+                double pipScale = config.PipScale > 0 && config.PipScale <= 1 ? config.PipScale : 0.5;
                 ComboBoxItem matched = null;
                 foreach (var item in PipScaleComboBox.Items)
                 {
@@ -632,7 +632,7 @@ namespace ExpressPackingMonitoring.UI
                         break;
                     }
                 }
-                PipScaleComboBox.SelectedItem = matched ?? PipScaleComboBox.Items[1]; // 默认"小（1/4）"
+                PipScaleComboBox.SelectedItem = matched ?? PipScaleComboBox.Items[0]; // 默认"大（1/2）"
             }
         }
 

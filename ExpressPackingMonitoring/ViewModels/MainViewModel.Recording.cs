@@ -2346,15 +2346,50 @@ namespace ExpressPackingMonitoring.ViewModels
                 }
                 else
                 {
-                    // 转换失败，保留 MKV，清理可能的残留 MP4
+                    // 主转换失败，尝试降级（纯视频 remux）
                     try { if (File.Exists(mp4Path)) File.Delete(mp4Path); } catch { }
-                    Debug.WriteLine($"[MkvToMp4] 转换失败，保留原始 MKV");
-                    WriteAudioDiagnostic($"MP4 转换或音轨校验失败，已保留 MKV/WAV: mkv={mkvPath}, wav={audioPath}", audioLogPath);
-                    _ = Application.Current.Dispatcher.InvokeAsync(() =>
+                    RuntimeLog.Warn("MkvToMp4", $"Primary convert failed, trying fallback video-only file={Path.GetFileName(mkvPath)}, stderr={TrimForRuntimeLog(convertStderr)}");
+
+                    var fbPsi = new ProcessStartInfo
                     {
-                        if (!_isDisposed)
-                            ShowToast("音轨校验失败，已保留原始文件", ToastSeverity.Error);
-                    });
+                        FileName = ffmpegPath,
+                        Arguments = BuildFallbackMkvToMp4Args(mkvPath, mp4Path),
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardError = true,
+                        RedirectStandardOutput = true
+                    };
+                    using var fbProcess = Process.Start(fbPsi);
+                    bool fbOk = false;
+                    if (fbProcess != null)
+                    {
+                        string fbStderr;
+                        bool fbExited = WaitForProcessExit(fbProcess, GetMediaProcessTimeoutMs(mkvPath), out fbStderr);
+                        fbOk = fbExited
+                            && fbProcess.ExitCode == 0
+                            && File.Exists(mp4Path)
+                            && new FileInfo(mp4Path).Length > 0;
+                        if (fbOk)
+                        {
+                            try { File.Delete(mkvPath); } catch { }
+                            DeleteAudioTempFile(audioPath);
+                            DeleteEmbeddedAudioMarker(mkvPath);
+                            _db?.UpdateVideoFilePath(mkvPath, mp4Path);
+                            Debug.WriteLine($"[MkvToMp4] 降级转换成功: {mp4Path}");
+                        }
+                        else
+                        {
+                            RuntimeLog.Warn("MkvToMp4", $"Fallback also failed file={Path.GetFileName(mkvPath)}, stderr={TrimForRuntimeLog(fbStderr)}");
+                        }
+                    }
+
+                    if (!fbOk)
+                    {
+                        // 转换失败，保留 MKV，清理可能的残留 MP4
+                        try { if (File.Exists(mp4Path)) File.Delete(mp4Path); } catch { }
+                        Debug.WriteLine($"[MkvToMp4] 转换失败，保留原始 MKV");
+                        WriteAudioDiagnostic($"MP4 转换失败，已保留 MKV: mkv={mkvPath}, stderr={convertStderr}", audioLogPath);
+                    }
                 }
             }
             catch (Exception ex)
@@ -2479,10 +2514,42 @@ namespace ExpressPackingMonitoring.ViewModels
                 if (!ok)
                 {
                     try { if (File.Exists(mp4Path)) File.Delete(mp4Path); } catch { }
-                    WriteAudioDiagnostic($"Web/后台 MKV 转 MP4 失败: mkv={mkvPath}, wav={audioPath}, stderr={stderr}", audioLogPath);
-                    RuntimeLog.Warn("MkvToMp4", $"Convert failed file={Path.GetFileName(mkvPath)}, exited={exited}, exitCode={(exited ? process.ExitCode : -999)}, stderr={TrimForRuntimeLog(stderr)}");
+                    WriteAudioDiagnostic($"主转换失败，尝试降级（纯视频）: mkv={mkvPath}, stderr={stderr}", audioLogPath);
+                    RuntimeLog.Warn("MkvToMp4", $"Primary convert failed, trying fallback video-only file={Path.GetFileName(mkvPath)}, exited={exited}, exitCode={(exited ? process.ExitCode : -999)}, stderr={TrimForRuntimeLog(stderr)}");
+
+                    // 降级：纯视频 remux，忽略音频和音轨校验
+                    var fbPsi = new ProcessStartInfo
+                    {
+                        FileName = ffmpegPath,
+                        Arguments = BuildFallbackMkvToMp4Args(mkvPath, mp4Path),
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardError = true,
+                        RedirectStandardOutput = true
+                    };
+                    using var fbProcess = Process.Start(fbPsi);
+                    if (fbProcess != null)
+                    {
+                        string fbStderr;
+                        bool fbExited = WaitForProcessExit(fbProcess, GetMediaProcessTimeoutMs(mkvPath), cancellationToken, out fbStderr);
+                        bool fbOk = fbExited
+                            && fbProcess.ExitCode == 0
+                            && File.Exists(mp4Path)
+                            && new FileInfo(mp4Path).Length > 0;
+                        if (fbOk)
+                        {
+                            try { File.Delete(mkvPath); } catch { }
+                            DeleteAudioTempFile(audioPath);
+                            DeleteEmbeddedAudioMarker(mkvPath);
+                            _db?.UpdateVideoFilePath(mkvPath, mp4Path);
+                            RuntimeLog.Info("MkvToMp4", $"Fallback video-only conversion succeeded file={Path.GetFileName(mkvPath)}");
+                            return MkvConversionResult.Ok(mp4Path);
+                        }
+                        RuntimeLog.Warn("MkvToMp4", $"Fallback also failed file={Path.GetFileName(mkvPath)}, stderr={TrimForRuntimeLog(fbStderr)}");
+                    }
+
                     string stderrSnippet = stderr != null && stderr.Length > 500 ? stderr.Substring(stderr.Length - 500) : (stderr ?? "");
-                    return MkvConversionResult.Fail(exited ? "MP4 转换或音轨校验失败" : "MP4 转换超时", mkvPath, stderrSnippet);
+                    return MkvConversionResult.Fail(exited ? "MP4 转换失败" : "MP4 转换超时", mkvPath, stderrSnippet);
                 }
 
                 try { File.Delete(mkvPath); } catch { }
@@ -2572,8 +2639,11 @@ namespace ExpressPackingMonitoring.ViewModels
                 ? " -tag:v hvc1"
                 : "";
 
+            // ignidx+discardcorrupt：容忍录制停止时 FFmpeg 被强杀导致的截断/索引不完整 MKV
+            string mkvInputFlags = "-fflags +ignidx+discardcorrupt";
+
             if (string.IsNullOrEmpty(audioPath) || !File.Exists(audioPath))
-                return $"-y -i \"{mkvPath}\" -map 0:v:0 -map 0:a? -c copy{hevcTag} \"{mp4Path}\"";
+                return $"-y {mkvInputFlags} -i \"{mkvPath}\" -map 0:v:0 -map 0:a? -c copy{hevcTag} \"{mp4Path}\"";
 
             int offsetMs = Math.Clamp(audioSyncOffsetMs, -5000, 5000);
             string audioMap = "[a]";
@@ -2593,7 +2663,16 @@ namespace ExpressPackingMonitoring.ViewModels
                 filter = " -filter_complex \"[1:a]apad[a]\"";
             }
 
-            return $"-y -i \"{mkvPath}\" -i \"{audioPath}\"{filter} -map 0:v:0 -map \"{audioMap}\" -c:v copy{hevcTag} -c:a aac -b:a 128k -shortest \"{mp4Path}\"";
+            return $"-y {mkvInputFlags} -i \"{mkvPath}\" -i \"{audioPath}\"{filter} -map 0:v:0 -map \"{audioMap}\" -c:v copy{hevcTag} -c:a aac -b:a 128k -shortest \"{mp4Path}\"";
+        }
+
+        /// <summary>
+        /// 降级转换：只拷贝视频流、忽略音频，用 ignidx 容忍截断 MKV。
+        /// 主转换失败时调用此方法作为兜底。
+        /// </summary>
+        internal static string BuildFallbackMkvToMp4Args(string mkvPath, string mp4Path)
+        {
+            return $"-y -fflags +ignidx+discardcorrupt -i \"{mkvPath}\" -map 0:v:0 -c:v copy \"{mp4Path}\"";
         }
 
         private bool ValidateConvertedMp4(
