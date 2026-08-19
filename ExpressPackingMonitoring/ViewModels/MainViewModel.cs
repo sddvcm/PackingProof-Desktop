@@ -1358,7 +1358,7 @@ namespace ExpressPackingMonitoring.ViewModels
                 {
                     string scanFolder = Path.Combine(ResolveBestStoragePlan().WorkingRootPath, upperResult);
                     if (!Directory.Exists(scanFolder)) Directory.CreateDirectory(scanFolder);
-                    StartScanCameraRecording(upperResult, scanFolder);
+                    await StartScanCameraRecordingAsync(upperResult, scanFolder);
                 }
                 await InternalStartRecordingAsync();
                 QueuePrintedRefundCheck(upperResult, CurrentMode);
@@ -4234,14 +4234,15 @@ namespace ExpressPackingMonitoring.ViewModels
         /// <summary>
         /// 启动扫描摄像头独立录制。扫码触发后立刻调用，从扫码瞬间开始录制。
         /// </summary>
-        private void StartScanCameraRecording(string orderId, string orderFolder)
+        private async Task StartScanCameraRecordingAsync(string orderId, string orderFolder)
         {
             if (!Config.EnableDualCamera || !Config.EnableScanCameraRecording)
                 return;
 
             try
             {
-                StopScanCameraRecording();
+                // 停止上一段扫描录制（等待 FFmpeg 正常写完 MKV 尾部再返回）。
+                await StopScanCameraRecordingAsync();
 
                 int srcW, srcH;
                 lock (_scanFrameLock)
@@ -4270,6 +4271,8 @@ namespace ExpressPackingMonitoring.ViewModels
                 double scale = (double)targetH / srcH;
                 targetW = (int)(srcW * scale);
                 if (targetW % 2 != 0) targetW++;
+                // "原始"档位 srcH 可能为奇数，libx264 + yuv420p 要求高度为偶数
+                if (targetH % 2 != 0) targetH++;
                 _scanRecordWidth = targetW;
                 _scanRecordHeight = targetH;
                 _scanRecordFps = _actualCameraFps > 0 ? _actualCameraFps : Config.Fps > 0 ? Config.Fps : 15;
@@ -4307,6 +4310,31 @@ namespace ExpressPackingMonitoring.ViewModels
                 }
                 _scanFfmpegStdin = _scanFfmpegProcess.StandardInput.BaseStream;
 
+                // 录制期间持续排空 stderr，防止管道写满后 FFmpeg 停止消费 stdin 导致死锁
+                var scanProc = _scanFfmpegProcess;
+                _scanStderrTask = Task.Run(() =>
+                {
+                    try { return scanProc.StandardError?.ReadToEnd() ?? ""; }
+                    catch { return ""; }
+                });
+
+                // 启动看门狗：FFmpeg 若在启动后 1.5 秒内就退出（参数/编码器错误），
+                // 立即记录 stderr，便于排查"扫描 MKV 空文件/无法播放"类问题。
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await Task.Delay(1500, _scanRecordingCts.Token);
+                        if (!scanProc.HasExited) return;
+                        string err = "";
+                        try { if (_scanStderrTask.Wait(2000)) err = _scanStderrTask.Result; } catch { }
+                        RuntimeLog.Error("ScanRecording",
+                            $"Scan FFmpeg exited early (code={TryGetExitCode(scanProc)}), file={Path.GetFileName(_scanRecordingFilePath ?? "?")}, stderr={TrimForRuntimeLog(err)}");
+                    }
+                    catch (OperationCanceledException) { }
+                    catch { }
+                });
+
                 // 在指定时长后自动停止
                 int duration = Math.Max(1, Config.ScanRecordDurationSeconds);
                 _ = Task.Run(async () =>
@@ -4314,11 +4342,8 @@ namespace ExpressPackingMonitoring.ViewModels
                     try
                     {
                         await Task.Delay(TimeSpan.FromSeconds(duration), _scanRecordingCts.Token);
-                        var dispatcher = Application.Current?.Dispatcher;
-                        if (dispatcher != null)
-                            _ = dispatcher.BeginInvoke(new Action(() => StopScanCameraRecording()));
-                        else
-                            StopScanCameraRecording();
+                        // 后台线程停止，避免阻塞 UI 线程
+                        _ = Task.Run(() => StopScanCameraRecording());
                     }
                     catch (OperationCanceledException) { }
                 });
@@ -4326,11 +4351,24 @@ namespace ExpressPackingMonitoring.ViewModels
             catch (Exception ex)
             {
                 RuntimeLog.Error("ScanRecording", "StartScanCameraRecording failed", ex);
-                StopScanCameraRecording();
+                _ = Task.Run(() => StopScanCameraRecording());
             }
         }
 
         private readonly object _scanFfmpegLock = new object();
+        private readonly object _scanStopLock = new object();
+        private Task<string>? _scanStderrTask;
+
+        private static int TryGetExitCode(Process proc)
+        {
+            try { return proc.HasExited ? proc.ExitCode : 0; }
+            catch { return -998; }
+        }
+
+        /// <summary>
+        /// 后台线程停止扫描录制（避免在 UI 线程上等待 FFmpeg 退出）。
+        /// </summary>
+        private Task StopScanCameraRecordingAsync() => Task.Run(() => StopScanCameraRecording());
 
         /// <summary>
         /// 把一帧扫描画面写入扫描录制 FFmpeg 管道（如果正在录制）。
@@ -4374,63 +4412,73 @@ namespace ExpressPackingMonitoring.ViewModels
 
         /// <summary>
         /// 停止扫描摄像头录制，关闭 FFmpeg 管道。
+        /// 单飞锁保证定时器停止、手动停止、切换订单不会并发执行。
         /// </summary>
         private void StopScanCameraRecording()
         {
-            Process proc = null;
-            string scanFile = null;
-
-            lock (_scanFfmpegLock)
+            lock (_scanStopLock)
             {
-                try { _scanRecordingCts?.Cancel(); }
-                catch { }
+                Process proc = null;
+                string scanFile = null;
 
-                if (_scanFfmpegStdin != null)
+                lock (_scanFfmpegLock)
                 {
-                    try { _scanFfmpegStdin.Flush(); _scanFfmpegStdin.Close(); } catch { }
-                    _scanFfmpegStdin = null;
+                    try { _scanRecordingCts?.Cancel(); }
+                    catch { }
+
+                    if (_scanFfmpegStdin != null)
+                    {
+                        try { _scanFfmpegStdin.Flush(); _scanFfmpegStdin.Close(); } catch { }
+                        _scanFfmpegStdin = null;
+                    }
+
+                    proc = _scanFfmpegProcess;
+                    scanFile = _scanRecordingFilePath;
+                    _scanRecordingFilePath = null;
                 }
 
-                proc = _scanFfmpegProcess;
-                scanFile = _scanRecordingFilePath;
-                _scanRecordingFilePath = null;
-            }
-
-            if (proc != null)
-            {
-                try
+                if (proc != null)
                 {
-                    // 异步读取 stderr 防止死锁（stderr 缓冲区满会阻塞 WaitForExit）
-                    var stderrTask = Task.Run(() =>
+                    var stderrTask = _scanStderrTask ?? Task.Run(() =>
                     {
                         try { return proc.StandardError?.ReadToEnd() ?? ""; }
                         catch { return ""; }
                     });
-
-                    if (!proc.HasExited)
+                    try
                     {
-                        // 给 FFmpeg 10 秒完成 MKV 封装，不再无脑 Kill
-                        proc.WaitForExit(10000);
                         if (!proc.HasExited)
                         {
-                            RuntimeLog.Warn("ScanRecording", "FFmpeg did not exit in 10s, killing");
-                            try { proc.Kill(); } catch { }
+                            // 给 FFmpeg 10 秒完成 MKV 封装，不再无脑 Kill
+                            proc.WaitForExit(10000);
+                            if (!proc.HasExited)
+                            {
+                                RuntimeLog.Warn("ScanRecording", "FFmpeg did not exit in 10s, killing");
+                                try { proc.Kill(); } catch { }
+                            }
+                        }
+
+                        int exitCode = TryGetExitCode(proc);
+                        long scanBytes = 0;
+                        try { if (File.Exists(scanFile)) scanBytes = new FileInfo(scanFile).Length; } catch { }
+
+                        if (exitCode != 0 || scanBytes < 4096)
+                        {
+                            string stderr = stderrTask.Wait(3000) ? stderrTask.Result : "";
+                            RuntimeLog.Warn("ScanRecording",
+                                $"Scan FFmpeg finished: exit={exitCode}, size={scanBytes}B, file={Path.GetFileName(scanFile ?? "?")}, stderr={TrimForRuntimeLog(stderr)}");
                         }
                     }
-
-                    string stderr = stderrTask.Wait(3000) ? stderrTask.Result : "";
-                    if (!string.IsNullOrWhiteSpace(stderr))
-                        RuntimeLog.Info("ScanRecording", $"FFmpeg stderr: {stderr.Substring(0, Math.Min(500, stderr.Length))}");
+                    catch { }
+                    try { proc.Dispose(); } catch { }
+                    _scanStderrTask = null;
+                    lock (_scanFfmpegLock) { _scanFfmpegProcess = null; }
                 }
-                catch { }
-                try { proc.Dispose(); } catch { }
-                lock (_scanFfmpegLock) { _scanFfmpegProcess = null; }
-            }
 
-            // 保存扫描录制文件路径，供主录制停止后做画中画合成
-            if (!string.IsNullOrEmpty(scanFile) && File.Exists(scanFile))
-            {
-                _pendingScanRecordingFile = scanFile;
+                // 保存扫描录制文件路径，供主录制停止后做画中画合成
+                if (!string.IsNullOrEmpty(scanFile) && File.Exists(scanFile))
+                {
+                    _pendingScanRecordingFile = scanFile;
+                }
             }
         }
 
