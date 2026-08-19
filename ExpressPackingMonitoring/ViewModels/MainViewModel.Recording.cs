@@ -122,20 +122,9 @@ namespace ExpressPackingMonitoring.ViewModels
             }
             RuntimeLog.Info("Recording", $"Stop requested id={recordId}, reason={stopReason}, file={Path.GetFileName(filePath ?? "")}");
 
-            // 画中画合成：主录制已停止、文件已定稿，此时合成 PIP（如果启用了且有扫描录制文件）
+            // 画中画合成推迟到 finalize task 内执行（合成成功后直接输出 MP4 + 更新 DB）
             var pendingScanFile = _pendingScanRecordingFile;
             _pendingScanRecordingFile = null;
-            if (Config.EnablePipComposite
-                && !string.IsNullOrEmpty(filePath)
-                && File.Exists(filePath)
-                && !string.IsNullOrEmpty(pendingScanFile)
-                && File.Exists(pendingScanFile))
-            {
-                var pipMainFile = filePath;
-                var pipScanFile = pendingScanFile;
-                var pipPosition = Config.PipPosition;
-                _ = Task.Run(() => CompositePipVideo(pipMainFile, pipScanFile, pipPosition));
-            }
 
             _recordStartTime = DateTime.MinValue;
             _currentScanRecord = null;
@@ -170,6 +159,11 @@ namespace ExpressPackingMonitoring.ViewModels
                         bool videoDeleted = DeleteVideoFileForRule(filePath, deleteReason);
                         DeleteAudioTempFile(audioFilePath);
                         DeleteEmbeddedAudioMarker(filePath);
+                        // 过小/过短时也删除扫描录制文件（如果有）
+                        if (!string.IsNullOrEmpty(pendingScanFile) && File.Exists(pendingScanFile))
+                        {
+                            try { File.Delete(pendingScanFile); } catch { }
+                        }
                         if (videoDeleted && !string.IsNullOrWhiteSpace(filePath))
                             _db?.MarkVideoDeleted(filePath, deleteReason);
 
@@ -208,8 +202,44 @@ namespace ExpressPackingMonitoring.ViewModels
                                     dur);
                         }
 
-                        // 自动将 MKV 转换为 MP4（无损容器转换）
-                        RuntimeLog.Info("Recording", $"Recording finalized as MKV, queued for idle/web conversion: {Path.GetFileName(filePath)}");
+                        // 画中画合成：直接输出 .pip.mp4，成功后更新 DB、删除原始 MKV 和扫描 MKV。
+                        // 失败时保留原始 MKV，留给 QueuePostStopMux 批量转码。
+                        bool pipDone = false;
+                        if (Config.EnablePipComposite
+                            && !string.IsNullOrEmpty(filePath)
+                            && File.Exists(filePath)
+                            && !string.IsNullOrEmpty(pendingScanFile)
+                            && File.Exists(pendingScanFile))
+                        {
+                            RuntimeLog.Info("PIP", $"Starting PIP composite: main={Path.GetFileName(filePath)}, scan={Path.GetFileName(pendingScanFile)}");
+                            string? pipResult = CompositePipVideo(filePath, pendingScanFile, Config.PipPosition);
+                            if (!string.IsNullOrEmpty(pipResult) && File.Exists(pipResult))
+                            {
+                                // PIP 合成成功：更新 DB 指向 PIP MP4，删除原始 MKV 和扫描 MKV
+                                _db?.UpdateVideoFilePath(filePath, pipResult);
+                                try { File.Delete(filePath); } catch { }
+                                try { File.Delete(pendingScanFile); } catch { }
+                                DeleteAudioTempFile(audioFilePath);
+                                DeleteEmbeddedAudioMarker(filePath);
+                                RuntimeLog.Info("PIP", $"PIP done, DB updated to {Path.GetFileName(pipResult)}, original MKV deleted");
+                                pipDone = true;
+                            }
+                            else
+                            {
+                                // PIP 合成失败：保留原始 MKV 和扫描 MKV，留给批量转码
+                                RuntimeLog.Warn("PIP", $"PIP composite failed, keeping original MKV for batch conversion: {Path.GetFileName(filePath)}");
+                            }
+                        }
+
+                        if (!pipDone)
+                        {
+                            // 未启用 PIP 或 PIP 失败：原始 MKV 留给 QueuePostStopMux 批量转码
+                            RuntimeLog.Info("Recording", $"Recording finalized as MKV, queued for batch conversion: {Path.GetFileName(filePath)}");
+                        }
+                        else
+                        {
+                            RuntimeLog.Info("Recording", $"Recording finalized as PIP MP4: {Path.GetFileName(filePath)}");
+                        }
 
                         _ = Application.Current.Dispatcher.InvokeAsync(() => {
                             if (!_isDisposed && scanRecord != null)

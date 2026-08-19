@@ -4435,9 +4435,12 @@ namespace ExpressPackingMonitoring.ViewModels
         }
 
         /// <summary>
-        /// 用 FFmpeg overlay 滤镜将扫描视频叠加到主视频角落，生成 _pip.mkv。
+        /// 用 FFmpeg overlay 滤镜将扫描视频叠加到主视频角落，直接输出 .pip.mp4。
+        /// 返回输出路径（成功）或 null（失败）。
+        /// 使用 -an 丢弃音频：主 MKV 可能因音频管道失败而无音频流或音频损坏，
+        /// -c:a copy 会导致 PIP 合成失败，故统一丢弃音频（PIP 视频仅用于视觉取证）。
         /// </summary>
-        private void CompositePipVideo(string mainVideo, string scanVideo, string position)
+        private string? CompositePipVideo(string mainVideo, string scanVideo, string position)
         {
             try
             {
@@ -4445,16 +4448,16 @@ namespace ExpressPackingMonitoring.ViewModels
                 if (string.IsNullOrEmpty(ffmpegPath))
                 {
                     RuntimeLog.Warn("PIP", "FFmpeg not found, skipping PIP composite");
-                    return;
+                    return null;
                 }
                 if (!File.Exists(mainVideo) || !File.Exists(scanVideo))
                 {
                     RuntimeLog.Warn("PIP", $"Missing input: main={File.Exists(mainVideo)}, scan={File.Exists(scanVideo)}");
-                    return;
+                    return null;
                 }
 
-                // 扫描画面按设置里的比例缩放，默认 1/4，支持 0.1~1.0
-                double pipScale = Config.PipScale > 0.05 && Config.PipScale <= 1.0 ? Config.PipScale : 0.25;
+                // 扫描画面按设置里的比例缩放，默认 1/2，支持 0.1~1.0
+                double pipScale = Config.PipScale > 0.05 && Config.PipScale <= 1.0 ? Config.PipScale : 0.5;
                 int scalePct = Math.Clamp((int)Math.Round(pipScale * 100), 5, 100);
                 // FFmpeg scale 表达式，限制输出宽高为偶数（libx264 要求）
                 string scaleExpr = $"trunc(iw*{scalePct}/100/2)*2:trunc(ih*{scalePct}/100/2)*2";
@@ -4466,10 +4469,12 @@ namespace ExpressPackingMonitoring.ViewModels
                     _ => "x=W-w-20:y=20", // TopRight
                 };
 
-                string pipFile = Path.ChangeExtension(mainVideo, ".pip.mkv");
+                // 直接输出 MP4 容器，避免额外的 MKV→MP4 转换步骤
+                string pipFile = Path.ChangeExtension(mainVideo, ".pip.mp4");
+                // -an 丢弃音频：主 MKV 可能无音频流或音频损坏，-c:a copy 会导致失败
                 string args = $"-y -i \"{mainVideo}\" -i \"{scanVideo}\" " +
                     $"-filter_complex \"[1:v]scale={scaleExpr}[bg];[0:v][bg]overlay={overlay}\" " +
-                    $"-c:v libx264 -preset fast -crf 25 -c:a copy \"{pipFile}\"";
+                    $"-c:v libx264 -preset fast -crf 25 -an \"{pipFile}\"";
 
                 RuntimeLog.Info("PIP", $"Compositing: {Path.GetFileName(pipFile)}");
 
@@ -4482,17 +4487,30 @@ namespace ExpressPackingMonitoring.ViewModels
                     RedirectStandardError = true
                 };
                 var proc = Process.Start(psi);
-                if (proc == null) return;
+                if (proc == null) return null;
                 string stderr = proc.StandardError.ReadToEnd() ?? "";
-                proc.WaitForExit(60000);
-                if (proc.ExitCode != 0)
+                // 超时保护：5 分钟仍未退出则 Kill
+                bool exited = proc.WaitForExit(300000);
+                if (!exited)
+                {
+                    try { proc.Kill(); } catch { }
+                    RuntimeLog.Warn("PIP", $"FFmpeg overlay timed out (5min), killed");
+                    return null;
+                }
+                if (proc.ExitCode != 0 || !File.Exists(pipFile) || new FileInfo(pipFile).Length == 0)
+                {
                     RuntimeLog.Warn("PIP", $"FFmpeg overlay exit={proc.ExitCode}, stderr={stderr.Substring(0, Math.Min(500, stderr.Length))}");
-                else
-                    RuntimeLog.Info("PIP", $"PIP composite done: {Path.GetFileName(pipFile)}");
+                    // 清理可能残留的空文件
+                    try { if (File.Exists(pipFile)) File.Delete(pipFile); } catch { }
+                    return null;
+                }
+                RuntimeLog.Info("PIP", $"PIP composite done: {Path.GetFileName(pipFile)}");
+                return pipFile;
             }
             catch (Exception ex)
             {
                 RuntimeLog.Error("PIP", "CompositePipVideo failed", ex);
+                return null;
             }
         }
 
