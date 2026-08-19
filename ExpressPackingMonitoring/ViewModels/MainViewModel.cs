@@ -74,6 +74,10 @@ namespace ExpressPackingMonitoring.ViewModels
         private int _scanRecordFps;
         // 扫码触发时"开始录制"语音播报的延迟（秒），0=立刻播报（手动按钮触发）
         private double _recordingSpeechDelaySeconds = 0;
+        // 扫描录制结束后暂存文件路径，等主录制停止后再做画中画合成
+        private string _pendingScanRecordingFile;
+        // 扫描摄像头悬浮预览窗口
+        private ScanCameraPreviewWindow _scanPreviewWindow;
 
         private BlockingCollection<Mat> _videoWriteQueue;
         private Task _writeTask;
@@ -1360,14 +1364,18 @@ namespace ExpressPackingMonitoring.ViewModels
                 QueuePrintedRefundCheck(upperResult, CurrentMode);
 
                 // 录制已启动、数据库记录已写入，此时检查重复单号（排除刚刚插入的当前记录）
-                bool isDuplicate = _db != null && _db.OrderIdExistsRecent(upperResult, excludeRecordId: _currentRecordId);
-                if (isDuplicate)
+                // 允许重复时跳过重复提示，直接说"开始录制"
+                if (!Config.AllowDuplicateTrackingNumber)
                 {
-                    PublishScannerAlert(
-                        $"duplicate-order-number:{upperResult}",
-                        "警告：重复单号，请确认",
-                        DefaultSpeechCatalog.DuplicateOrderNumber,
-                        repeatCount: 3);
+                    bool isDuplicate = _db != null && _db.OrderIdExistsRecent(upperResult, excludeRecordId: _currentRecordId);
+                    if (isDuplicate)
+                    {
+                        PublishScannerAlert(
+                            $"duplicate-order-number:{upperResult}",
+                            "警告：重复单号，请确认",
+                            DefaultSpeechCatalog.DuplicateOrderNumber,
+                            repeatCount: 3);
+                    }
                 }
 
                 // 查询快递助手推送的订单信息，在预览画面持续提示并按设置播报
@@ -2630,6 +2638,8 @@ namespace ExpressPackingMonitoring.ViewModels
                         _archiveService?.Wake();
                     }
                     progress?.Report($"[{i + 1}/{total}] 转换失败: {fileName}");
+                    // 把 stderr 末尾（前 500 字符）单独写一行日志，便于在日志目录里 grep 具体原因
+                    RuntimeLog.Warn("MkvConvert", $"[X/Y] failed file={fileName}, error={conversionResult.ErrorMessage}, stderr={TrimForRuntimeLog(conversionResult.StderrSnippet)}");
                 }
             }
 
@@ -4111,6 +4121,7 @@ namespace ExpressPackingMonitoring.ViewModels
                 _scanCameraEverConnected = true;
                 _lastScanFrameTime = DateTime.Now;
                 RuntimeLog.Info("ScanCamera", $"USB scan camera started index={idx}, name={videoDevices[idx].Name}");
+                ShowScanPreviewWindow();
             }
             catch (Exception ex)
             {
@@ -4148,6 +4159,7 @@ namespace ExpressPackingMonitoring.ViewModels
             _scanCameraEverConnected = true;
             _lastScanFrameTime = DateTime.Now;
             RuntimeLog.Info("ScanCamera", $"network scan camera started url={NetworkCameraUrlPolicy.SanitizeForLog(url)}");
+            ShowScanPreviewWindow();
         }
 
         private void ScanNetworkCameraSource_StreamInfoReady(object sender, NetworkCameraStreamInfoEventArgs e)
@@ -4198,6 +4210,19 @@ namespace ExpressPackingMonitoring.ViewModels
 
                 // 如果扫描摄像头正在录制，把当前帧写入 FFmpeg 管道。
                 FeedFrameToScanRecorder(frame);
+
+                // 更新悬浮预览窗口
+                if (_scanPreviewWindow != null && _scanPreviewWindow.IsVisible)
+                {
+                    Mat previewFrame;
+                    lock (_scanFrameLock)
+                    {
+                        previewFrame = (_scanLatestFrame != null && !_scanLatestFrame.IsDisposed && !_scanLatestFrame.Empty())
+                            ? _scanLatestFrame.Clone() : null;
+                    }
+                    if (previewFrame != null)
+                        _scanPreviewWindow.UpdateFrame(previewFrame);
+                }
             }
             catch (Exception ex)
             {
@@ -4305,15 +4330,22 @@ namespace ExpressPackingMonitoring.ViewModels
             }
         }
 
+        private readonly object _scanFfmpegLock = new object();
+
         /// <summary>
         /// 把一帧扫描画面写入扫描录制 FFmpeg 管道（如果正在录制）。
         /// </summary>
         private void FeedFrameToScanRecorder(Mat frame)
         {
-            if (_scanFfmpegProcess == null || _scanFfmpegProcess.HasExited || _scanFfmpegStdin == null)
-                return;
-            if (_scanRecordingCts?.IsCancellationRequested == true)
-                return;
+            Stream stdin;
+            lock (_scanFfmpegLock)
+            {
+                if (_scanFfmpegProcess == null || _scanFfmpegProcess.HasExited || _scanFfmpegStdin == null)
+                    return;
+                if (_scanRecordingCts?.IsCancellationRequested == true)
+                    return;
+                stdin = _scanFfmpegStdin;
+            }
             if (frame == null || frame.IsDisposed || frame.Empty())
                 return;
 
@@ -4327,7 +4359,11 @@ namespace ExpressPackingMonitoring.ViewModels
                 if (resized.IsContinuous() && resized.Type() == MatType.CV_8UC3)
                 {
                     Marshal.Copy(resized.Data, buffer, 0, expectedBytes);
-                    _scanFfmpegStdin.Write(buffer, 0, expectedBytes);
+                    lock (_scanFfmpegLock)
+                    {
+                        if (_scanFfmpegStdin != null && _scanFfmpegProcess != null && !_scanFfmpegProcess.HasExited)
+                            _scanFfmpegStdin.Write(buffer, 0, expectedBytes);
+                    }
                 }
             }
             catch (Exception ex)
@@ -4341,49 +4377,60 @@ namespace ExpressPackingMonitoring.ViewModels
         /// </summary>
         private void StopScanCameraRecording()
         {
-            try
-            {
-                _scanRecordingCts?.Cancel();
-            }
-            catch { }
+            Process proc = null;
+            string scanFile = null;
 
-            try
+            lock (_scanFfmpegLock)
             {
+                try { _scanRecordingCts?.Cancel(); }
+                catch { }
+
                 if (_scanFfmpegStdin != null)
                 {
                     try { _scanFfmpegStdin.Flush(); _scanFfmpegStdin.Close(); } catch { }
                     _scanFfmpegStdin = null;
                 }
-            }
-            catch { }
 
-            if (_scanFfmpegProcess != null)
+                proc = _scanFfmpegProcess;
+                scanFile = _scanRecordingFilePath;
+                _scanRecordingFilePath = null;
+            }
+
+            if (proc != null)
             {
                 try
                 {
-                    if (!_scanFfmpegProcess.HasExited)
+                    // 异步读取 stderr 防止死锁（stderr 缓冲区满会阻塞 WaitForExit）
+                    var stderrTask = Task.Run(() =>
                     {
-                        _scanFfmpegProcess.WaitForExit(3000);
-                        if (!_scanFfmpegProcess.HasExited)
+                        try { return proc.StandardError?.ReadToEnd() ?? ""; }
+                        catch { return ""; }
+                    });
+
+                    if (!proc.HasExited)
+                    {
+                        // 给 FFmpeg 10 秒完成 MKV 封装，不再无脑 Kill
+                        proc.WaitForExit(10000);
+                        if (!proc.HasExited)
                         {
-                            _scanFfmpegProcess.Kill();
+                            RuntimeLog.Warn("ScanRecording", "FFmpeg did not exit in 10s, killing");
+                            try { proc.Kill(); } catch { }
                         }
                     }
-                    string stderr = _scanFfmpegProcess.StandardError?.ReadToEnd() ?? "";
+
+                    string stderr = stderrTask.Wait(3000) ? stderrTask.Result : "";
                     if (!string.IsNullOrWhiteSpace(stderr))
                         RuntimeLog.Info("ScanRecording", $"FFmpeg stderr: {stderr.Substring(0, Math.Min(500, stderr.Length))}");
                 }
                 catch { }
-                try { _scanFfmpegProcess.Dispose(); } catch { }
-                _scanFfmpegProcess = null;
+                try { proc.Dispose(); } catch { }
+                lock (_scanFfmpegLock) { _scanFfmpegProcess = null; }
             }
 
-            // 如果启用了画中画，合成 PIP 视频
-            string scanFile = _scanRecordingFilePath;
-            _scanRecordingFilePath = null;
-            if (!string.IsNullOrEmpty(scanFile) && File.Exists(scanFile) && Config.EnablePipComposite && !string.IsNullOrEmpty(_currentVideoFilePath))
+            // 保存扫描录制文件路径，供主录制停止后做画中画合成
+            if (!string.IsNullOrEmpty(scanFile) && File.Exists(scanFile))
             {
-                _ = Task.Run(() => CompositePipVideo(_currentVideoFilePath, scanFile, Config.PipPosition));
+                _pendingScanRecordingFile = scanFile;
             }
         }
 
@@ -4406,7 +4453,11 @@ namespace ExpressPackingMonitoring.ViewModels
                     return;
                 }
 
-                // 扫描画面缩到主视频宽度的 1/4
+                // 扫描画面按设置里的比例缩放，默认 1/4，支持 0.1~1.0
+                double pipScale = Config.PipScale > 0.05 && Config.PipScale <= 1.0 ? Config.PipScale : 0.25;
+                int scalePct = Math.Clamp((int)Math.Round(pipScale * 100), 5, 100);
+                // FFmpeg scale 表达式，限制输出宽高为偶数（libx264 要求）
+                string scaleExpr = $"trunc(iw*{scalePct}/100/2)*2:trunc(ih*{scalePct}/100/2)*2";
                 string overlay = position switch
                 {
                     "TopLeft" => "x=20:y=20",
@@ -4417,7 +4468,7 @@ namespace ExpressPackingMonitoring.ViewModels
 
                 string pipFile = Path.ChangeExtension(mainVideo, ".pip.mkv");
                 string args = $"-y -i \"{mainVideo}\" -i \"{scanVideo}\" " +
-                    $"-filter_complex \"[1:v]scale=iw/4:ih/4[bg];[0:v][bg]overlay={overlay}\" " +
+                    $"-filter_complex \"[1:v]scale={scaleExpr}[bg];[0:v][bg]overlay={overlay}\" " +
                     $"-c:v libx264 -preset fast -crf 25 -c:a copy \"{pipFile}\"";
 
                 RuntimeLog.Info("PIP", $"Compositing: {Path.GetFileName(pipFile)}");
@@ -4442,6 +4493,34 @@ namespace ExpressPackingMonitoring.ViewModels
             catch (Exception ex)
             {
                 RuntimeLog.Error("PIP", "CompositePipVideo failed", ex);
+            }
+        }
+
+        private void ShowScanPreviewWindow()
+        {
+            var dispatcher = Application.Current?.Dispatcher;
+            if (dispatcher == null) return;
+            dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (_scanPreviewWindow != null && _scanPreviewWindow.IsVisible)
+                    return;
+                _scanPreviewWindow = new ScanCameraPreviewWindow();
+                _scanPreviewWindow.Show();
+            }));
+        }
+
+        private void CloseScanPreviewWindow()
+        {
+            var dispatcher = Application.Current?.Dispatcher;
+            if (dispatcher == null) return;
+            var w = _scanPreviewWindow;
+            _scanPreviewWindow = null;
+            if (w != null)
+            {
+                dispatcher.BeginInvoke(new Action(() =>
+                {
+                    try { w.Close(); } catch { }
+                }));
             }
         }
 
@@ -4478,6 +4557,7 @@ namespace ExpressPackingMonitoring.ViewModels
             }
 
             lock (_scanFrameLock) { _scanLatestFrame?.Dispose(); _scanLatestFrame = null; }
+            CloseScanPreviewWindow();
             RuntimeLog.Info("ScanCamera", "StopScanCamera completed");
         }
 

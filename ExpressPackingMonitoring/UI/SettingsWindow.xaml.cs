@@ -615,6 +615,25 @@ namespace ExpressPackingMonitoring.UI
             DualCameraCheckBox.IsChecked = config.EnableDualCamera;
             ScanCameraRow.Visibility = config.EnableDualCamera ? Visibility.Visible : Visibility.Collapsed;
             ScanNetworkCameraPanel.Visibility = Visibility.Collapsed;
+
+            // 同步画中画尺寸比例（按 Tag 字符串匹配最近值，默认 0.25）
+            if (PipScaleComboBox != null)
+            {
+                double pipScale = config.PipScale > 0 && config.PipScale <= 1 ? config.PipScale : 0.25;
+                ComboBoxItem matched = null;
+                foreach (var item in PipScaleComboBox.Items)
+                {
+                    if (item is ComboBoxItem cbi &&
+                        double.TryParse(cbi.Tag as string, System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out double v) &&
+                        Math.Abs(v - pipScale) < 0.01)
+                    {
+                        matched = cbi;
+                        break;
+                    }
+                }
+                PipScaleComboBox.SelectedItem = matched ?? PipScaleComboBox.Items[1]; // 默认"小（1/4）"
+            }
         }
 
         private async System.Threading.Tasks.Task LoadCameraCapabilitiesAsync(
@@ -834,6 +853,19 @@ namespace ExpressPackingMonitoring.UI
             ScanNetworkCameraUrlPlaceholderText.Visibility = string.IsNullOrEmpty(ScanNetworkCameraUrlTextBox.Text)
                 ? Visibility.Visible
                 : Visibility.Collapsed;
+        }
+
+        /// <summary>
+        /// 画中画尺寸比例变更：Tag 是 double 字符串，转回 Config.PipScale。
+        /// </summary>
+        private void PipScaleComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (PipScaleComboBox.SelectedItem is ComboBoxItem item &&
+                double.TryParse(item.Tag as string, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out double v))
+            {
+                Config.PipScale = v;
+            }
         }
 
         private async void ScanNetworkCameraTestButton_Click(object sender, RoutedEventArgs e)

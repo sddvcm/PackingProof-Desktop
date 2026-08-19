@@ -636,8 +636,22 @@ namespace ExpressPackingMonitoring.UI
 
         private static bool IsRoutineShutdownProgressMessage(string message)
         {
-            return !string.IsNullOrWhiteSpace(message)
-                && message.Contains("文件不存在，跳过", StringComparison.Ordinal);
+            if (string.IsNullOrWhiteSpace(message))
+                return false;
+            // 关软件时，批量转换的逐行进度不进 toast（避免 [1/8] 转换失败…这种刺眼提示）
+            // 真正的失败通知由 ShowMkvFailureToastIfNeeded 在结尾统一弹一个汇总 toast。
+            if (message.Contains("文件不存在，跳过", StringComparison.Ordinal)) return true;
+            if (message.StartsWith("[", StringComparison.Ordinal) && message.Contains("]", StringComparison.Ordinal))
+            {
+                return message.Contains("转换", StringComparison.Ordinal)
+                    || message.Contains("已停止自动重试", StringComparison.Ordinal)
+                    || message.Contains("MP4 已存在", StringComparison.Ordinal)
+                    || message.Contains("正在转换", StringComparison.Ordinal)
+                    || message.Contains("已更新数据库", StringComparison.Ordinal)
+                    || message.Contains("发现疑似半截 MP4", StringComparison.Ordinal)
+                    || message.Contains("已清理 MKV", StringComparison.Ordinal);
+            }
+            return false;
         }
 
         internal enum BottomBarLayout

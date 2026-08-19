@@ -122,6 +122,21 @@ namespace ExpressPackingMonitoring.ViewModels
             }
             RuntimeLog.Info("Recording", $"Stop requested id={recordId}, reason={stopReason}, file={Path.GetFileName(filePath ?? "")}");
 
+            // 画中画合成：主录制已停止、文件已定稿，此时合成 PIP（如果启用了且有扫描录制文件）
+            var pendingScanFile = _pendingScanRecordingFile;
+            _pendingScanRecordingFile = null;
+            if (Config.EnablePipComposite
+                && !string.IsNullOrEmpty(filePath)
+                && File.Exists(filePath)
+                && !string.IsNullOrEmpty(pendingScanFile)
+                && File.Exists(pendingScanFile))
+            {
+                var pipMainFile = filePath;
+                var pipScanFile = pendingScanFile;
+                var pipPosition = Config.PipPosition;
+                _ = Task.Run(() => CompositePipVideo(pipMainFile, pipScanFile, pipPosition));
+            }
+
             _recordStartTime = DateTime.MinValue;
             _currentScanRecord = null;
             _currentVideoFilePath = null;
@@ -2378,6 +2393,7 @@ namespace ExpressPackingMonitoring.ViewModels
             string? videoCodec = null)
         {
             bool lockTaken = false;
+            string stderr = ""; // catch 块需要，作用域提到外层
             try
             {
                 _mkvConvertLock.Wait(cancellationToken);
@@ -2451,7 +2467,6 @@ namespace ExpressPackingMonitoring.ViewModels
                 if (process == null)
                     return MkvConversionResult.Fail("FFmpeg 进程启动失败", mkvPath);
 
-                string stderr;
                 bool exited = WaitForProcessExit(process, GetMediaProcessTimeoutMs(mkvPath, audioPath), cancellationToken, out stderr);
                 bool hasExternalAudio = !string.IsNullOrEmpty(audioPath) && File.Exists(audioPath);
                 bool hasEmbeddedAudio = HasEmbeddedAudioMarker(mkvPath);
@@ -2466,7 +2481,8 @@ namespace ExpressPackingMonitoring.ViewModels
                     try { if (File.Exists(mp4Path)) File.Delete(mp4Path); } catch { }
                     WriteAudioDiagnostic($"Web/后台 MKV 转 MP4 失败: mkv={mkvPath}, wav={audioPath}, stderr={stderr}", audioLogPath);
                     RuntimeLog.Warn("MkvToMp4", $"Convert failed file={Path.GetFileName(mkvPath)}, exited={exited}, exitCode={(exited ? process.ExitCode : -999)}, stderr={TrimForRuntimeLog(stderr)}");
-                    return MkvConversionResult.Fail(exited ? "MP4 转换或音轨校验失败" : "MP4 转换超时", mkvPath);
+                    string stderrSnippet = stderr != null && stderr.Length > 500 ? stderr.Substring(stderr.Length - 500) : (stderr ?? "");
+                    return MkvConversionResult.Fail(exited ? "MP4 转换或音轨校验失败" : "MP4 转换超时", mkvPath, stderrSnippet);
                 }
 
                 try { File.Delete(mkvPath); } catch { }
@@ -2484,7 +2500,7 @@ namespace ExpressPackingMonitoring.ViewModels
             {
                 DeleteIncompleteMp4WhileSourceIsPreserved(mkvPath);
                 RuntimeLog.Error("MkvToMp4", $"Convert exception file={Path.GetFileName(mkvPath ?? "")}", ex);
-                return MkvConversionResult.Fail(ex.Message, mkvPath ?? "");
+                return MkvConversionResult.Fail(ex.Message, mkvPath ?? "", stderr ?? "");
             }
             finally
             {

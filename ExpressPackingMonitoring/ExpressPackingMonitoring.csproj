@@ -209,6 +209,7 @@
     <Compile Include="UI\ManualCleanupDialog.xaml.cs" />
     <Compile Include="UI\NotificationVisuals.cs" />
     <Compile Include="UI\PlaybackWindow.xaml.cs" />
+    <Compile Include="UI\ScanCameraPreviewWindow.xaml.cs" />
     <Compile Include="UI\VideoImportDialog.xaml.cs" />
     <Compile Include="UI\SettingsWindow.xaml.cs" />
     <Compile Include="UI\SettingsContext.cs" />

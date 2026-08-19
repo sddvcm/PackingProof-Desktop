@@ -1340,6 +1340,19 @@
                                                 <ComboBoxItem Content="左下" Tag="BottomLeft"/>
                                                 <ComboBoxItem Content="右下" Tag="BottomRight"/>
                                             </ComboBox>
+                                            <ComboBox x:Name="PipScaleComboBox"
+                                                      Margin="12,0,0,0"
+                                                      SelectedValuePath="Tag"
+                                                      SelectionChanged="PipScaleComboBox_SelectionChanged"
+                                                      VerticalAlignment="Center"
+                                                      MinWidth="120"
+                                                      ToolTip="扫描画面相对主视频宽度的占比">
+                                                <ComboBoxItem Content="极小（1/6）" Tag="0.1667"/>
+                                                <ComboBoxItem Content="小（1/4）" Tag="0.25"/>
+                                                <ComboBoxItem Content="中（1/3）" Tag="0.3333"/>
+                                                <ComboBoxItem Content="大（1/2）" Tag="0.5"/>
+                                                <ComboBoxItem Content="特大（2/3）" Tag="0.6667"/>
+                                            </ComboBox>
                                         </StackPanel>
                                     </Grid>
 
