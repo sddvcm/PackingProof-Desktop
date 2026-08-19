@@ -2285,22 +2285,19 @@ namespace ExpressPackingMonitoring.ViewModels
                 string mp4Path = Path.ChangeExtension(mkvPath, ".mp4");
                 if (audioFailed)
                 {
-                    WriteAudioDiagnostic($"音频录制失败，已保留 MKV: mkv={mkvPath}", audioLogPath);
-                    _ = Application.Current.Dispatcher.InvokeAsync(() =>
-                    {
-                        if (!_isDisposed)
-                            ShowToast("音频录制失败，已保留原始文件", ToastSeverity.Error);
-                    });
+                    // 音频录制失败：不再直接 return 改走降级（纯视频 remux），
+                    // 用户能看到无声视频比完全看不到强。降级过程复用 BuildFallbackMkvToMp4Args。
+                    WriteAudioDiagnostic($"音频录制失败，走纯视频降级 remux: mkv={mkvPath}", audioLogPath);
+                    RuntimeLog.Warn("MkvToMp4", $"Audio capture failed, falling back to video-only remux file={Path.GetFileName(mkvPath)}");
+                    TryFallbackVideoOnlyRemux(mkvPath, mp4Path, ffmpegPath);
                     return;
                 }
                 if (!ValidateAudioCaptureForMux(audioPath, audioLogPath, audioBytesWritten))
                 {
-                    Debug.WriteLine("[MkvToMp4] WAV 音频疑似提前静音，跳过 MP4 合成");
-                    _ = Application.Current.Dispatcher.InvokeAsync(() =>
-                    {
-                        if (!_isDisposed)
-                            ShowToast("音频疑似提前静音，已保留原始文件", ToastSeverity.Warning);
-                    });
+                    // WAV 校验失败（如静音时长异常）：同样改走降级，避免 MKV 永远转不成 MP4。
+                    Debug.WriteLine("[MkvToMp4] WAV 音频疑似提前静音，走纯视频降级 remux");
+                    RuntimeLog.Warn("MkvToMp4", $"Audio capture unusable, falling back to video-only remux file={Path.GetFileName(mkvPath)}");
+                    TryFallbackVideoOnlyRemux(mkvPath, mp4Path, ffmpegPath);
                     return;
                 }
 
@@ -2459,11 +2456,10 @@ namespace ExpressPackingMonitoring.ViewModels
                 string? audioPath = ResolveSidecarPath(mkvPath, ".wav");
                 string? audioLogPath = ResolveSidecarPath(mkvPath, ".audio.log");
 
-                if (audioPath == null && audioLogPath != null)
-                {
-                    RuntimeLog.Warn("MkvToMp4", $"Audio failure sidecar exists without WAV, keeping MKV to avoid silent MP4 file={Path.GetFileName(mkvPath)}");
-                    return MkvConversionResult.Fail("音频录制失败，已保留 MKV，避免生成无声 MP4", mkvPath);
-                }
+                // 音频录制失败（audio.log 存在但 WAV 缺失）时，v7 之前会直接 return 失败，
+                // 但用户实际拿到的是每个文件都报"转换失败"，根本看不到视频。改成走降级纯视频 remux，
+                // 生成无音频 MP4（总比看不到强）；后续若音频管道修复，可再回到主转换路径。
+                bool audioFailedButRecovered = audioPath == null && audioLogPath != null;
 
                 if (File.Exists(mp4Path) && new FileInfo(mp4Path).Length > 0)
                 {
@@ -2484,6 +2480,15 @@ namespace ExpressPackingMonitoring.ViewModels
                 string ffmpegPath = FindFFmpeg();
                 if (string.IsNullOrEmpty(ffmpegPath))
                     return MkvConversionResult.Fail("未找到 FFmpeg，无法转换", mkvPath);
+
+                if (audioFailedButRecovered)
+                {
+                    RuntimeLog.Warn("MkvToMp4", $"Audio capture failed, falling back to video-only remux file={Path.GetFileName(mkvPath)}");
+                    bool audioFbOk = TryFallbackVideoOnlyRemuxWithCancel(mkvPath, mp4Path, ffmpegPath, cancellationToken);
+                    return audioFbOk
+                        ? MkvConversionResult.Ok(mp4Path)
+                        : MkvConversionResult.Fail("音频录制失败，纯视频 remux 失败，已保留 MKV", mkvPath);
+                }
 
                 if (!ValidateAudioCaptureForMux(audioPath, audioLogPath, 0))
                     return MkvConversionResult.Fail("WAV 音频校验失败，已保留 MKV/WAV", mkvPath);
@@ -2673,6 +2678,60 @@ namespace ExpressPackingMonitoring.ViewModels
         internal static string BuildFallbackMkvToMp4Args(string mkvPath, string mp4Path)
         {
             return $"-y -fflags +ignidx+discardcorrupt -i \"{mkvPath}\" -map 0:v:0 -c:v copy \"{mp4Path}\"";
+        }
+
+        /// <summary>
+        /// 直接执行纯视频降级 remux（含数据库更新、清理临时文件、日志）。
+        /// 用于 ConvertMkvToMp4 单文件路径：WAV 缺失/校验失败时不再 return，直接降级出无声 MP4。
+        /// 返回 true 表示降级成功，false 表示仍失败。
+        /// </summary>
+        private bool TryFallbackVideoOnlyRemux(string mkvPath, string mp4Path, string ffmpegPath)
+        {
+            return TryFallbackVideoOnlyRemuxCore(mkvPath, mp4Path, ffmpegPath, CancellationToken.None, out _);
+        }
+
+        /// <summary>
+        /// 带 CancellationToken 的降级 remux，给 ConvertMkvToMp4ForPlayback 用。
+        /// </summary>
+        private bool TryFallbackVideoOnlyRemuxWithCancel(string mkvPath, string mp4Path, string ffmpegPath, CancellationToken cancellationToken)
+        {
+            return TryFallbackVideoOnlyRemuxCore(mkvPath, mp4Path, ffmpegPath, cancellationToken, out _);
+        }
+
+        private bool TryFallbackVideoOnlyRemuxCore(string mkvPath, string mp4Path, string ffmpegPath, CancellationToken cancellationToken, out string stderrOut)
+        {
+            stderrOut = "";
+            if (string.IsNullOrEmpty(mkvPath) || !File.Exists(mkvPath)) return false;
+            if (string.IsNullOrEmpty(ffmpegPath)) return false;
+            try { if (File.Exists(mp4Path)) File.Delete(mp4Path); } catch { }
+            var psi = new ProcessStartInfo
+            {
+                FileName = ffmpegPath,
+                Arguments = BuildFallbackMkvToMp4Args(mkvPath, mp4Path),
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true
+            };
+            using var proc = Process.Start(psi);
+            if (proc == null) return false;
+            bool exited = WaitForProcessExit(proc, GetMediaProcessTimeoutMs(mkvPath), cancellationToken, out stderrOut);
+            bool ok = exited
+                && proc.ExitCode == 0
+                && File.Exists(mp4Path)
+                && new FileInfo(mp4Path).Length > 0;
+            if (ok)
+            {
+                try { File.Delete(mkvPath); } catch { }
+                DeleteEmbeddedAudioMarker(mkvPath);
+                _db?.UpdateVideoFilePath(mkvPath, mp4Path);
+                Debug.WriteLine($"[MkvToMp4] 降级纯视频转换成功: {mp4Path}");
+                RuntimeLog.Info("MkvToMp4", $"Video-only fallback remux succeeded file={Path.GetFileName(mkvPath)}");
+                return true;
+            }
+            RuntimeLog.Warn("MkvToMp4", $"Video-only fallback remux failed file={Path.GetFileName(mkvPath)}, exit={(exited ? proc.ExitCode : -999)}, stderr={TrimForRuntimeLog(stderrOut)}");
+            try { if (File.Exists(mp4Path)) File.Delete(mp4Path); } catch { }
+            return false;
         }
 
         private bool ValidateConvertedMp4(
