@@ -155,6 +155,15 @@ namespace ExpressPackingMonitoring.Config
         public string NetworkCameraUrl { get; set; } = "";
         public string NetworkCameraRtspTransport { get; set; } = "tcp";
 
+        // 双摄像头模式：扫描摄像头（专用于条码识别），与录像摄像头互相独立。
+        // 关闭 EnableDualCamera 时，识别与录制共用同一个录像摄像头（完全兼容原行为）。
+        public bool EnableDualCamera { get; set; } = false;
+        public string ScanCameraMonikerString { get; set; } = "";
+        public int ScanCameraIndex { get; set; } = 0;
+        public string ScanCameraSourceKind { get; set; } = "usb"; // "usb" | "network"
+        public string ScanNetworkCameraUrl { get; set; } = "";
+        public string ScanNetworkCameraRtspTransport { get; set; } = "tcp";
+
         // 存储不同摄像头的配置：Key 为 MonikerString
         public Dictionary<string, CameraSettings> CameraConfigs { get; set; } = new();
 
@@ -782,7 +791,30 @@ namespace ExpressPackingMonitoring.Config
                 || !string.Equals(currentUrl, nextUrl, StringComparison.Ordinal)
                 || (currentKind == "network"
                     && nextKind == "network"
-                    && !string.Equals(currentTransport, nextTransport, StringComparison.Ordinal));
+                    && !string.Equals(currentTransport, nextTransport, StringComparison.Ordinal))
+                || current.EnableDualCamera != next.EnableDualCamera
+                || current.ScanCameraIndex != next.ScanCameraIndex
+                || !string.Equals(current.ScanCameraMonikerString, next.ScanCameraMonikerString, StringComparison.Ordinal)
+                || !string.Equals(
+                    NormalizeCameraSourceKind(current.ScanCameraSourceKind, current.ScanNetworkCameraUrl),
+                    NormalizeCameraSourceKind(next.ScanCameraSourceKind, next.ScanNetworkCameraUrl),
+                    StringComparison.Ordinal)
+                || !string.Equals(
+                    (current.ScanNetworkCameraUrl ?? "").Trim(),
+                    (next.ScanNetworkCameraUrl ?? "").Trim(),
+                    StringComparison.Ordinal)
+                || (string.Equals(
+                        NormalizeCameraSourceKind(current.ScanCameraSourceKind, current.ScanNetworkCameraUrl),
+                        "network",
+                        StringComparison.Ordinal)
+                    && string.Equals(
+                        NormalizeCameraSourceKind(next.ScanCameraSourceKind, next.ScanNetworkCameraUrl),
+                        "network",
+                        StringComparison.Ordinal)
+                    && !string.Equals(
+                        NormalizeNetworkTransport(current.ScanNetworkCameraRtspTransport),
+                        NormalizeNetworkTransport(next.ScanNetworkCameraRtspTransport),
+                        StringComparison.Ordinal));
         }
 
         private static List<StorageLocation> CreateDefaultStorageLocations()

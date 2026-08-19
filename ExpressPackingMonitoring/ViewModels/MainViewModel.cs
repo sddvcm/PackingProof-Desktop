@@ -55,6 +55,15 @@ namespace ExpressPackingMonitoring.ViewModels
         private Mat _latestFrame;
         private readonly object _frameLock = new object();
 
+        // 双摄像头模式：扫描摄像头（专用于条码识别），与录像摄像头（_videoSource/_networkCameraSource）互相独立。
+        private VideoCaptureDevice _scanVideoSource;
+        private NetworkCameraSource _scanNetworkCameraSource;
+        private DateTime _scanNetworkCameraStartedAt = DateTime.MinValue;
+        private Mat _scanLatestFrame;
+        private readonly object _scanFrameLock = new object();
+        private DateTime _lastScanFrameTime = DateTime.MinValue;
+        private bool _scanCameraEverConnected = false;
+
         private BlockingCollection<Mat> _videoWriteQueue;
         private Task _writeTask;
         private Task _lastFinalizeTask;
@@ -3934,6 +3943,7 @@ namespace ExpressPackingMonitoring.ViewModels
                 _lastPreviewPublishedAt = DateTime.Now;
                 _cameraEverConnected = true;
                 RuntimeLog.Info("Camera", $"StartCamera success {_actualCameraWidth}x{_actualCameraHeight}@{_actualCameraFps}, configured={Config.FrameWidth}x{Config.FrameHeight}@{Config.Fps}, running={_videoSource.IsRunning}, previewSession={previewSessionId}");
+                StartScanCameraIfNeeded(previewSessionId);
             }
             catch (Exception ex)
             {
@@ -3982,6 +3992,7 @@ namespace ExpressPackingMonitoring.ViewModels
             RuntimeLog.Info(
                 "Camera",
                 $"StartNetworkCamera url={NetworkCameraUrlPolicy.SanitizeForLog(url)}, transport={Config.NetworkCameraRtspTransport}, previewSession={previewSessionId}");
+            StartScanCameraIfNeeded(previewSessionId);
         }
 
         private void NetworkCameraSource_StreamInfoReady(object sender, NetworkCameraStreamInfoEventArgs e)
@@ -4009,8 +4020,203 @@ namespace ExpressPackingMonitoring.ViewModels
             });
         }
 
+        // ===== 双摄像头：扫描摄像头（专用于条码识别）=====
+        private void StartScanCameraIfNeeded(int previewSessionId)
+        {
+            if (_isDisposed || _shutdownRequested)
+                return;
+            if (!Config.EnableDualCamera)
+                return;
+            if (_scanVideoSource != null || _scanNetworkCameraSource != null)
+                return;
+
+            bool scanNetwork = string.Equals(Config.ScanCameraSourceKind, "network", StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(Config.ScanNetworkCameraUrl);
+
+            if (scanNetwork)
+            {
+                StartScanNetworkCamera();
+                return;
+            }
+
+            // USB 扫描摄像头
+            try
+            {
+                var videoDevices = new FilterInfoCollection(FilterCategory.VideoInputDevice);
+                if (videoDevices.Count == 0)
+                {
+                    RuntimeLog.Warn("ScanCamera", "StartScanCamera: no video devices");
+                    return;
+                }
+
+                string target = Config.ScanCameraMonikerString;
+                int idx = -1;
+                if (!string.IsNullOrEmpty(target))
+                {
+                    for (int i = 0; i < videoDevices.Count; i++)
+                    {
+                        if (videoDevices[i].MonikerString == target) { idx = i; break; }
+                    }
+                    if (idx == -1)
+                    {
+                        RuntimeLog.Warn("ScanCamera", $"configured scan camera missing, moniker={target}");
+                        return;
+                    }
+                }
+                if (idx == -1)
+                {
+                    if (Config.ScanCameraIndex >= 0 && Config.ScanCameraIndex < videoDevices.Count)
+                        idx = Config.ScanCameraIndex;
+                    else
+                        idx = 0;
+                    Config.ScanCameraMonikerString = videoDevices[idx].MonikerString;
+                }
+
+                _scanVideoSource = new VideoCaptureDevice(videoDevices[idx].MonikerString);
+                _scanVideoSource.NewFrame += ScanVideoSource_NewFrame;
+                _scanVideoSource.Start();
+                _scanCameraEverConnected = true;
+                _lastScanFrameTime = DateTime.Now;
+                RuntimeLog.Info("ScanCamera", $"USB scan camera started index={idx}, name={videoDevices[idx].Name}");
+            }
+            catch (Exception ex)
+            {
+                RuntimeLog.Error("ScanCamera", "USB scan camera start failed", ex);
+                try { _scanVideoSource?.Stop(); } catch { }
+                _scanVideoSource = null;
+            }
+        }
+
+        private void StartScanNetworkCamera()
+        {
+            if (!NetworkCameraUrlPolicy.TryNormalize(Config.ScanNetworkCameraUrl, out string url, out string error))
+            {
+                RuntimeLog.Warn("ScanCamera", $"network url rejected: {error}");
+                return;
+            }
+
+            var source = new NetworkCameraSource(
+                url,
+                Config.ScanNetworkCameraRtspTransport,
+                Config.Fps > 0 ? Config.Fps : 15);
+            source.StreamInfoReady += ScanNetworkCameraSource_StreamInfoReady;
+            source.FrameReady += ScanNetworkCameraSource_FrameReady;
+            source.SourceError += ScanNetworkCameraSource_SourceError;
+
+            if (!source.Start())
+            {
+                RuntimeLog.Warn("ScanCamera", $"network scan camera start failed: {source.LastError}");
+                source.Dispose();
+                return;
+            }
+
+            _scanNetworkCameraSource = source;
+            _scanNetworkCameraStartedAt = DateTime.Now;
+            _scanCameraEverConnected = true;
+            _lastScanFrameTime = DateTime.Now;
+            RuntimeLog.Info("ScanCamera", $"network scan camera started url={NetworkCameraUrlPolicy.SanitizeForLog(url)}");
+        }
+
+        private void ScanNetworkCameraSource_StreamInfoReady(object sender, NetworkCameraStreamInfoEventArgs e)
+        {
+            RuntimeLog.Info("ScanCamera", $"network stream ready {e.Width}x{e.Height}@{e.Fps}");
+        }
+
+        private void ScanNetworkCameraSource_FrameReady(object sender, NetworkCameraFrameEventArgs e)
+        {
+            _lastScanFrameTime = DateTime.Now;
+            if (!_cameraFrameRateGate.ShouldAccept(false, _actualCameraFps))
+            {
+                e.Frame.Dispose();
+                return;
+            }
+            HandleScanCameraFrame(e.Frame);
+        }
+
+        private void ScanNetworkCameraSource_SourceError(object sender, NetworkCameraErrorEventArgs e)
+        {
+            RuntimeLog.Error("ScanCamera", $"network source error: {e.Description}");
+        }
+
+        private void ScanVideoSource_NewFrame(object sender, NewFrameEventArgs eventArgs)
+        {
+            _lastScanFrameTime = DateTime.Now;
+            if (!_cameraFrameRateGate.ShouldAccept(false, _actualCameraFps))
+                return;
+            try
+            {
+                HandleScanCameraFrame(BitmapToMat(eventArgs.Frame));
+            }
+            catch (Exception ex)
+            {
+                RuntimeLog.Error("ScanCamera", "NewFrame conversion failed", ex);
+            }
+        }
+
+        private void HandleScanCameraFrame(Mat frame)
+        {
+            try
+            {
+                lock (_scanFrameLock)
+                {
+                    _scanLatestFrame?.Dispose();
+                    _scanLatestFrame = frame;
+                }
+            }
+            catch (Exception ex)
+            {
+                frame.Dispose();
+                RuntimeLog.Error("ScanCamera", "HandleScanCameraFrame failed", ex);
+            }
+        }
+
+        private void StopScanCamera()
+        {
+            NetworkCameraSource scanNet = _scanNetworkCameraSource;
+            if (scanNet != null)
+            {
+                scanNet.StreamInfoReady -= ScanNetworkCameraSource_StreamInfoReady;
+                scanNet.FrameReady -= ScanNetworkCameraSource_FrameReady;
+                scanNet.SourceError -= ScanNetworkCameraSource_SourceError;
+                try { scanNet.Stop(); } catch { }
+                if (ReferenceEquals(_scanNetworkCameraSource, scanNet))
+                    _scanNetworkCameraSource = null;
+            }
+
+            VideoCaptureDevice scanUsb = _scanVideoSource;
+            if (scanUsb != null)
+            {
+                try { scanUsb.NewFrame -= ScanVideoSource_NewFrame; } catch { }
+                try
+                {
+                    if (scanUsb.IsRunning)
+                    {
+                        scanUsb.SignalToStop();
+                        for (int i = 0; i < 50 && scanUsb.IsRunning; i++)
+                            Thread.Sleep(100);
+                    }
+                }
+                catch (SEHException) { }
+                catch (Exception ex) { RuntimeLog.Warn("ScanCamera", $"graceful stop failed: {ex.Message}"); }
+                if (ReferenceEquals(_scanVideoSource, scanUsb))
+                    _scanVideoSource = null;
+            }
+
+            lock (_scanFrameLock) { _scanLatestFrame?.Dispose(); _scanLatestFrame = null; }
+            RuntimeLog.Info("ScanCamera", "StopScanCamera completed");
+        }
+
+        private void RestartScanCamera()
+        {
+            if (_isDisposed || _shutdownRequested) return;
+            StopScanCamera();
+            StartScanCameraIfNeeded(0);
+            _lastScanFrameTime = DateTime.Now;
+        }
+
         private bool StopCamera()
         {
+            StopScanCamera();
             if (!_isDisposed)
                 ResetCameraBarcodeRecognition();
 
@@ -4204,10 +4410,38 @@ namespace ExpressPackingMonitoring.ViewModels
                         }
                     }
 
+                    // 双摄像头：扫描摄像头独立健康检查与重连（不影响录像摄像头）
+                    if (Config.EnableDualCamera
+                        && (_scanVideoSource != null || _scanNetworkCameraSource != null)
+                        && _scanCameraEverConnected
+                        && (DateTime.Now - _lastScanFrameTime).TotalSeconds > 2.0)
+                    {
+                        RuntimeLog.Warn("ScanCamera", "scan camera signal lost, restarting");
+                        RestartScanCamera();
+                    }
+
                     if (currentFrame != null && !currentFrame.Empty())
                     {
                         TrySubmitCameraPairingQrFrame(currentFrame);
-                        TrySubmitCameraBarcodeFrame(currentFrame);
+                        // 双摄像头模式：条码识别改用独立的扫描摄像头帧；录像/预览仍用 currentFrame（录像摄像头）
+                        Mat scanFrame = null;
+                        if (Config.EnableDualCamera && (_scanVideoSource != null || _scanNetworkCameraSource != null))
+                        {
+                            lock (_scanFrameLock)
+                            {
+                                if (_scanLatestFrame != null && !_scanLatestFrame.IsDisposed && !_scanLatestFrame.Empty())
+                                    scanFrame = _scanLatestFrame.Clone();
+                            }
+                        }
+                        if (scanFrame != null)
+                        {
+                            TrySubmitCameraBarcodeFrame(scanFrame);
+                            scanFrame.Dispose();
+                        }
+                        else
+                        {
+                            TrySubmitCameraBarcodeFrame(currentFrame);
+                        }
                         Mat processedFrame = currentFrame;
                         CameraFrameSize = new System.Windows.Size(currentFrame.Width, currentFrame.Height);
 

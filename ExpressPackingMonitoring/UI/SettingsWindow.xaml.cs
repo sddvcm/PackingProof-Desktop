@@ -591,6 +591,30 @@ namespace ExpressPackingMonitoring.UI
             FpsComboBox.ItemsSource = fpsCbiList;
             var fpsMatch = fpsCbiList.FirstOrDefault(i => (int)i.Tag == config.Fps);
             FpsComboBox.SelectedItem = fpsMatch ?? fpsCbiList.FirstOrDefault();
+
+            // 扫描摄像头下拉：复用同一摄像头清单（追加独立"扫描网络摄像头"项）
+            var scanCameras = new List<CameraInfo>(cameras);
+            for (int i = 0; i < scanCameras.Count; i++)
+            {
+                if (string.Equals(scanCameras[i].Moniker, "network:", StringComparison.Ordinal))
+                {
+                    scanCameras[i] = new CameraInfo
+                    {
+                        Index = scanCameras[i].Index,
+                        Name = AppLanguage.Get("网络摄像头（手动地址）"),
+                        Moniker = "scan-network:"
+                    };
+                }
+            }
+            ScanCameraComboBox.ItemsSource = scanCameras;
+            if (string.Equals(config.ScanCameraSourceKind, "network", StringComparison.OrdinalIgnoreCase))
+                ScanCameraComboBox.SelectedItem = scanCameras.FirstOrDefault(IsScanNetworkCamera);
+            else
+                ScanCameraComboBox.SelectedValue = config.ScanCameraIndex;
+
+            DualCameraCheckBox.IsChecked = config.EnableDualCamera;
+            ScanCameraRow.Visibility = config.EnableDualCamera ? Visibility.Visible : Visibility.Collapsed;
+            ScanNetworkCameraPanel.Visibility = Visibility.Collapsed;
         }
 
         private async System.Threading.Tasks.Task LoadCameraCapabilitiesAsync(
@@ -752,6 +776,98 @@ namespace ExpressPackingMonitoring.UI
         private static bool IsNetworkCamera(CameraInfo camera)
         {
             return string.Equals(camera?.Moniker, "network:", StringComparison.Ordinal);
+        }
+
+        private static bool IsScanNetworkCamera(CameraInfo camera)
+        {
+            return string.Equals(camera?.Moniker, "scan-network:", StringComparison.Ordinal);
+        }
+
+        private void DualCameraCheckBox_Changed(object sender, RoutedEventArgs e)
+        {
+            if (DualCameraCheckBox.IsChecked == true)
+            {
+                ScanCameraRow.Visibility = Visibility.Visible;
+                RefreshScanCameraPanelVisibility();
+            }
+            else
+            {
+                ScanCameraRow.Visibility = Visibility.Collapsed;
+                ScanNetworkCameraPanel.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        private async void ScanCameraComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (ScanCameraComboBox.SelectedItem is CameraInfo selectedCam && IsScanNetworkCamera(selectedCam))
+            {
+                ShowScanNetworkCameraPanelUi();
+                return;
+            }
+
+            if (_isLoadingDevices) return;
+            ScanNetworkCameraPanel.Visibility = Visibility.Collapsed;
+        }
+
+        private void ShowScanNetworkCameraPanelUi()
+        {
+            ScanNetworkCameraPanel.Visibility = Visibility.Visible;
+            if (string.IsNullOrWhiteSpace(ScanNetworkCameraUrlTextBox.Text))
+                ScanNetworkCameraUrlTextBox.Text = Config.ScanNetworkCameraUrl ?? "";
+            ScanNetworkCameraUrlPlaceholderText.Visibility = string.IsNullOrEmpty(ScanNetworkCameraUrlTextBox.Text)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            ScanNetworkCameraStatusText.Text = "";
+        }
+
+        private void RefreshScanCameraPanelVisibility()
+        {
+            if (DualCameraCheckBox.IsChecked != true) return;
+            if (ScanCameraComboBox.SelectedItem is CameraInfo cam && IsScanNetworkCamera(cam))
+                ShowScanNetworkCameraPanelUi();
+            else
+                ScanNetworkCameraPanel.Visibility = Visibility.Collapsed;
+        }
+
+        private void ScanNetworkCameraUrlTextBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            ScanNetworkCameraUrlPlaceholderText.Visibility = string.IsNullOrEmpty(ScanNetworkCameraUrlTextBox.Text)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
+
+        private async void ScanNetworkCameraTestButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!NetworkCameraUrlPolicy.TryNormalize(
+                    ScanNetworkCameraUrlTextBox.Text,
+                    out string url,
+                    out string error))
+            {
+                ScanNetworkCameraStatusText.Text = $"地址无效：{error}";
+                return;
+            }
+
+            ScanNetworkCameraTestButton.IsEnabled = false;
+            ScanNetworkCameraStatusText.Text = "正在连接扫描网络摄像头...";
+            try
+            {
+                using var probeSource = new NetworkCameraSource(
+                    url,
+                    AppConfig.NormalizeNetworkTransport(Config.NetworkCameraRtspTransport),
+                    width: 1280,
+                    height: 720,
+                    fps: 15);
+                await probeSource.ProbeAsync(TimeSpan.FromSeconds(5));
+                ScanNetworkCameraStatusText.Text = "✓ 扫描网络摄像头连接成功";
+            }
+            catch (Exception ex)
+            {
+                ScanNetworkCameraStatusText.Text = $"连接失败：{ex.Message}";
+            }
+            finally
+            {
+                ScanNetworkCameraTestButton.IsEnabled = true;
+            }
         }
 
         private void NetworkCameraUrlTextBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -1775,6 +1891,35 @@ namespace ExpressPackingMonitoring.UI
                             Rotate180 = Config.CameraRotate180
                         };
                     }
+                }
+            }
+
+            // 收集"双摄像头模式"与"扫描摄像头"选择
+            Config.EnableDualCamera = DualCameraCheckBox.IsChecked == true;
+            if (Config.EnableDualCamera
+                && ScanCameraComboBox.SelectedItem is CameraInfo scanCam)
+            {
+                if (IsScanNetworkCamera(scanCam))
+                {
+                    if (!NetworkCameraUrlPolicy.TryNormalize(
+                            ScanNetworkCameraUrlTextBox.Text,
+                            out string scanNetUrl,
+                            out string scanNetErr))
+                    {
+                        Context.ShowToast?.Invoke($"扫描摄像头地址无效：{scanNetErr}", ToastSeverity.Error);
+                        return false;
+                    }
+
+                    Config.ScanCameraSourceKind = "network";
+                    Config.ScanNetworkCameraUrl = scanNetUrl;
+                    Config.ScanCameraMonikerString = "";
+                    Config.ScanCameraIndex = -1;
+                }
+                else
+                {
+                    Config.ScanCameraSourceKind = "usb";
+                    Config.ScanCameraMonikerString = scanCam.Moniker;
+                    Config.ScanCameraIndex = scanCam.Index;
                 }
             }
 
