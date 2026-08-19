@@ -608,6 +608,12 @@
                                                         <TextBlock Text="录制中" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource BadgeErrorText}"/>
                                                     </StackPanel>
                                                 </Border>
+                                                <Border Grid.Column="1" x:Name="TranscodingStatusBorder" Background="{DynamicResource BadgeSuccessBg}" CornerRadius="4" Padding="6,2" Margin="8,0" Visibility="Collapsed">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <Ellipse Width="6" Height="6" Fill="{DynamicResource AccentGreen}" Margin="0,0,5,0" VerticalAlignment="Center"/>
+                                                        <TextBlock Text="转码中" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource BadgeSuccessText}"/>
+                                                    </StackPanel>
+                                                </Border>
                                                 <Border Grid.Column="2" x:Name="BadgeBorder" CornerRadius="4" Padding="6,2" VerticalAlignment="Center" Background="{DynamicResource BadgePackBg}">
                                                     <TextBlock x:Name="BadgeText" Text="{Binding Mode, Converter={StaticResource LocalizedTextConverter}}" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource BadgePackText}"/>
                                                 </Border>
@@ -642,6 +648,7 @@
                                         <Setter TargetName="DurationIcon" Property="Data" Value="{StaticResource FluentClockIcon}"/>
                                         <Setter TargetName="DurationIcon" Property="Fill" Value="{DynamicResource AccentRed}"/>
                                         <Setter TargetName="ActiveStatusBorder" Property="Visibility" Value="Visible"/>
+                                        <Setter TargetName="TranscodingStatusBorder" Property="Visibility" Value="Collapsed"/>
                                         
                                         <DataTrigger.EnterActions>
                                             <BeginStoryboard x:Name="ShimmerStoryboard">
@@ -670,6 +677,17 @@
                                         <DataTrigger.ExitActions>
                                             <StopStoryboard BeginStoryboardName="ShimmerStoryboard"/>
                                         </DataTrigger.ExitActions>
+                                    </DataTrigger>
+
+                                    <!-- finalize task 跑期间显示绿色"转码中"，没有流光 -->
+                                    <DataTrigger Binding="{Binding IsTranscoding}" Value="True">
+                                        <Setter TargetName="ItemBorder" Property="BorderBrush" Value="{DynamicResource AccentGreen}"/>
+                                        <Setter TargetName="ItemBorder" Property="BorderThickness" Value="1.5"/>
+                                        <Setter TargetName="DurationText" Property="Foreground" Value="{DynamicResource AccentGreen}"/>
+                                        <Setter TargetName="DurationIcon" Property="Fill" Value="{DynamicResource AccentGreen}"/>
+                                        <Setter TargetName="ActiveStatusBorder" Property="Visibility" Value="Collapsed"/>
+                                        <Setter TargetName="TranscodingStatusBorder" Property="Visibility" Value="Visible"/>
+                                        <Setter TargetName="ShimmerLayer" Property="Visibility" Value="Collapsed"/>
                                     </DataTrigger>
 
                                     <DataTrigger Binding="{Binding Mode}" Value="退货">

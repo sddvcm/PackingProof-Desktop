@@ -27,13 +27,17 @@ namespace ExpressPackingMonitoring.Config
         // 新增活跃状态，用于前端变色
         [ObservableProperty] private bool _isActive;
 
-        public ScanRecord(string orderId, string duration, string dateStr, string mode, bool isActive = false)
-        { 
-            OrderId = orderId; 
-            Duration = duration; 
-            DateStr = dateStr; 
-            Mode = mode; 
-            IsActive = isActive; 
+        // finalize 期间（停止录制到 MP4/PIP 完成）显示绿色"转码中"
+        [ObservableProperty] private bool _isTranscoding;
+
+        public ScanRecord(string orderId, string duration, string dateStr, string mode, bool isActive = false, bool isTranscoding = false)
+        {
+            OrderId = orderId;
+            Duration = duration;
+            DateStr = dateStr;
+            Mode = mode;
+            IsActive = isActive;
+            IsTranscoding = isTranscoding;
         }
     }
 

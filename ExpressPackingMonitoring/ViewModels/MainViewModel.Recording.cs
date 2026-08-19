@@ -136,11 +136,24 @@ namespace ExpressPackingMonitoring.ViewModels
             _currentFfmpegProcess = null;
             _recordingOrderId = null;
 
-            _lastFinalizeTask = Task.Run(() => 
+            _lastFinalizeTask = Task.Run(() =>
             {
                 if (_isDisposed) return; // 销毁中不再执行数据库后的 UI 更新
                 try
                 {
+                    // 立即在 UI 上把"录制中"红色切换成"转码中"绿色，
+                    // 避免后续 PIP + 两次 Remux 期间用户感觉订单没停止。
+                    if (scanRecord != null)
+                    {
+                        _ = Application.Current.Dispatcher.InvokeAsync(() => {
+                            if (!_isDisposed && scanRecord != null)
+                            {
+                                scanRecord.IsActive = false;
+                                scanRecord.IsTranscoding = true;
+                                scanRecord.Duration = "转码中";
+                            }
+                        });
+                    }
                     long fileSize = GetCompletedRecordingSizeBytes(filePath, audioFilePath);
                     double recordDuration = (DateTime.Now - recordStart).TotalSeconds;
                     int durSec = Math.Max(1, (int)recordDuration);
@@ -265,6 +278,7 @@ namespace ExpressPackingMonitoring.ViewModels
                             if (!_isDisposed && scanRecord != null)
                             {
                                 scanRecord.Duration = "已保存";
+                                scanRecord.IsTranscoding = false;
                                 scanRecord.IsActive = false;
                                 RefreshTodayStats();
                             }

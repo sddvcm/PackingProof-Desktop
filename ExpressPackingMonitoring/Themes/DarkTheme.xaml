@@ -34,6 +34,8 @@
     <SolidColorBrush x:Key="BadgeReturnText" Color="{DynamicResource Amber300Color}"/>
     <SolidColorBrush x:Key="BadgeErrorBg" Color="{DynamicResource Red900Color}"/>
     <SolidColorBrush x:Key="BadgeErrorText" Color="{DynamicResource Red300Color}"/>
+    <SolidColorBrush x:Key="BadgeSuccessBg" Color="{DynamicResource Green500Color}"/>
+    <SolidColorBrush x:Key="BadgeSuccessText" Color="#FFFFFFFF"/>
 
     <!-- Misc -->
     <SolidColorBrush x:Key="ToastBackground" Color="{DynamicResource ToastDarkColor}"/>
