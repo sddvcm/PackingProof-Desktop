@@ -616,23 +616,24 @@ namespace ExpressPackingMonitoring.UI
             ScanCameraRow.Visibility = config.EnableDualCamera ? Visibility.Visible : Visibility.Collapsed;
             ScanNetworkCameraPanel.Visibility = Visibility.Collapsed;
 
-            // 同步画中画尺寸比例（按 Tag 字符串匹配最近值，默认 0.5）
-            if (PipScaleComboBox != null)
+            if (ScanCameraRotationComboBox != null)
             {
-                double pipScale = config.PipScale > 0 && config.PipScale <= 1 ? config.PipScale : 0.5;
-                ComboBoxItem matched = null;
-                foreach (var item in PipScaleComboBox.Items)
-                {
-                    if (item is ComboBoxItem cbi &&
-                        double.TryParse(cbi.Tag as string, System.Globalization.NumberStyles.Float,
-                            System.Globalization.CultureInfo.InvariantCulture, out double v) &&
-                        Math.Abs(v - pipScale) < 0.01)
-                    {
-                        matched = cbi;
-                        break;
-                    }
-                }
-                PipScaleComboBox.SelectedItem = matched ?? PipScaleComboBox.Items[0]; // 默认"大（1/2）"
+                int rotation = CameraFrameOrientation.Normalize(config.ScanCameraRotation);
+                ScanCameraRotationComboBox.SelectedItem = ScanCameraRotationComboBox.Items
+                    .OfType<ComboBoxItem>()
+                    .FirstOrDefault(item => int.TryParse(item.Tag as string, out int value) && value == rotation);
+            }
+
+            // 同步画中画宽度（像素）：0 表示未设置，输入框留空
+            if (PipWidthTextBox != null)
+            {
+                PipWidthTextBox.Text = config.PipWidth > 0 ? config.PipWidth.ToString() : "";
+            }
+
+            // 同步"保持系统音量"开关（打开=保持音量，即关闭播报前调最大）
+            if (KeepSystemVolumeCheckBox != null)
+            {
+                KeepSystemVolumeCheckBox.IsChecked = config.MaximizeVolumeForSpeech != true;
             }
         }
 
@@ -858,13 +859,12 @@ namespace ExpressPackingMonitoring.UI
         /// <summary>
         /// 画中画尺寸比例变更：Tag 是 double 字符串，转回 Config.PipScale。
         /// </summary>
-        private void PipScaleComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        private void ScanCameraRotationComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (PipScaleComboBox.SelectedItem is ComboBoxItem item &&
-                double.TryParse(item.Tag as string, System.Globalization.NumberStyles.Float,
-                    System.Globalization.CultureInfo.InvariantCulture, out double v))
+            if (ScanCameraRotationComboBox.SelectedItem is ComboBoxItem item
+                && int.TryParse(item.Tag as string, out int rotation))
             {
-                Config.PipScale = v;
+                Config.ScanCameraRotation = CameraFrameOrientation.Normalize(rotation);
             }
         }
 
@@ -1972,6 +1972,24 @@ namespace ExpressPackingMonitoring.UI
                     .ToList();
             }
 
+            // 保存画中画宽度（像素）：无效或为空时回退到旧的比例（PipScale）
+            if (PipWidthTextBox != null)
+            {
+                if (int.TryParse(PipWidthTextBox.Text.Trim(), out int pipWidth)
+                    && pipWidth >= 80 && pipWidth <= 7680)
+                {
+                    Config.PipWidth = pipWidth;
+                }
+                else
+                {
+                    Config.PipWidth = 0;
+                }
+            }
+
+            // 保持系统音量开关：打开=播报不修改系统音量；关闭=播报前自动取消静音并调到最大
+            if (KeepSystemVolumeCheckBox != null)
+                Config.MaximizeVolumeForSpeech = KeepSystemVolumeCheckBox.IsChecked != true;
+
             // 3. 校验并保存
             if (Capabilities.IsRecordingDevice &&
                 AppLanguage.Resolve(Config.Language) == AppLanguage.Chinese)
@@ -2569,7 +2587,7 @@ namespace ExpressPackingMonitoring.UI
 
         private void OpenRepository_Click(object sender, RoutedEventArgs e)
         {
-            OpenExternalUrl("https://github.com/PackingProof/PackingProof-Desktop");
+            OpenExternalUrl("https://github.com/sddvcm/PackingProof-Desktop");
         }
 
         private async void Feedback_Click(object sender, RoutedEventArgs e)
@@ -2580,7 +2598,7 @@ namespace ExpressPackingMonitoring.UI
             {
                 bool confirmed = AppDialog.Confirm(
                     this,
-                    $"将打包运行日志、配置和完整录像数据库（含订单明细、买家留言等隐私数据）到本地压缩包。\n确认继续吗？打包完成后可发送到反馈邮箱 {FeedbackEmail}",
+                    $"将打包运行日志、配置和完整录像数据库（含订单明细、买家留言等隐私数据）到本地压缩包。\n确认继续吗？打包完成后可反馈到仓库 https://github.com/sddvcm/PackingProof-Desktop",
                     "反馈问题",
                     AppDialogSeverity.Warning,
                     confirmText: "开始打包");
@@ -2613,37 +2631,33 @@ namespace ExpressPackingMonitoring.UI
                     $"反馈包已生成：\n{zipPath}\n\n" +
                     $"大小：{FormatBytes(info.Length)}\n" +
                     "已复制路径并打开所在文件夹。\n\n" +
-                    $"点击“发送邮件”会尝试直接打开一封已带反馈模板和压缩包附件的新邮件（收件人 {FeedbackEmail}），填写问题后发送即可；若本机没有经典 Outlook，会退回邮件草稿或普通邮件（可能需要手动添加附件）。\n\n" +
-                    "注意：包内含完整订单数据库与本地配置，请勿转发给无关人员";
+                    $"点击“打开 GitHub Issue”会打开仓库 https://github.com/sddvcm/PackingProof-Desktop 的新建 Issue 页面（标题已预填），请在网页中填写问题描述，并把压缩包作为附件上传后提交。\n\n" +
+                    "注意：包内含完整订单数据库与本地配置，请勿上传到公开 Issue；如不便公开可仅在标题/描述里粘贴关键日志片段。";
                 if (warnings.Count > 0)
                     message += "\n\n提示：\n" + string.Join("\n", warnings.Take(10));
 
-                bool sendMail = AppDialog.Confirm(
+                bool openIssue = AppDialog.Confirm(
                     this,
                     message,
                     "反馈问题",
                     AppDialogSeverity.Information,
-                    confirmText: "发送邮件",
+                    confirmText: "打开 GitHub Issue",
                     cancelText: "关闭",
                     isDangerous: false);
-                if (sendMail)
+                if (openIssue)
                 {
-                    string subject =
-                        $"PackingProof 反馈（{ExpressPackingMonitoring.Config.AppVersion.Current}）";
-                    string body = FeedbackPackageService.BuildFeedbackBody(
-                        zipPath,
-                        ExpressPackingMonitoring.Config.AppVersion.Current,
-                        ExpressPackingMonitoring.Config.AppVersion.CommitShortId);
-                    bool opened =
-                        FeedbackMailLauncher.TryOpenOutlookDraft(
-                            FeedbackEmail, subject, body, zipPath)
-                        || FeedbackMailLauncher.TryOpenEmlDraft(emlPath)
-                        || FeedbackMailLauncher.TryOpenMailto(FeedbackEmail, subject, body);
-                    if (!opened)
+                    string issueTitle = $"PackingProof 反馈 v{ExpressPackingMonitoring.Config.AppVersion.Current}";
+                    string issuesUrl =
+                        $"https://github.com/sddvcm/PackingProof-Desktop/issues/new?title={Uri.EscapeDataString(issueTitle)}";
+                    try
+                    {
+                        OpenExternalUrl(issuesUrl);
+                    }
+                    catch (Exception ex)
                     {
                         AppDialog.Error(
                             this,
-                            $"未能打开邮件客户端，请手动发送到 {FeedbackEmail}（压缩包路径已复制到剪贴板，请作为附件添加）",
+                            $"未能打开浏览器，请手动访问：{issuesUrl}\n压缩包路径已复制到剪贴板。错误：{ex.Message}",
                             "反馈问题");
                     }
                 }
@@ -2673,7 +2687,7 @@ namespace ExpressPackingMonitoring.UI
 
         private void OpenLicense_Click(object sender, RoutedEventArgs e)
         {
-            OpenExternalUrl("https://github.com/PackingProof/PackingProof-Desktop/blob/main/LICENSE");
+            OpenExternalUrl("https://github.com/sddvcm/PackingProof-Desktop/blob/main/LICENSE");
         }
 
         private static string GetStorageRoot(string path)

@@ -63,7 +63,7 @@ internal sealed class LauncherUpdateService
     internal const string DownloadFailureStateFileName = "launcher-download-failures.json";
     internal const int GithubDownloadFailureFallbackThreshold = 3;
     internal const string DefaultGithubDownloadBaseUrl =
-        "https://github.com/PackingProof/PackingProof-Desktop/releases/download";
+        "https://github.com/sddvcm/PackingProof-Desktop/releases/download";
     internal const int MaxRetainedBackups = 3;
     internal static readonly TimeSpan LauncherExitWaitTimeout = TimeSpan.FromSeconds(5);
 

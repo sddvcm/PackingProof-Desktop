@@ -28,7 +28,7 @@ $requiredCoreTests = @(
     "CameraBarcodeRecognitionTests.Decoder_RepeatedDecodesAvoidPerFrameLargeManagedAllocations",
     "CameraBarcodeRecognitionTests.RecordingDecisionPolicy_CameraPreviewMatchesRecordingRules",
     "CameraBarcodeRecognitionTests.RecordingDecisionPolicy_ProductEan13NeverStopsSameCodeRecording",
-    "ConfigurationAndScannerTests.AppConfig_LegacyJsonEnablesMaximumSpeechVolumeByDefault",
+    "ConfigurationAndScannerTests.AppConfig_PreservesSystemVolumeByDefault",
     "ConfigurationAndScannerTests.IsFastSequence_DistinguishesScannerAndManualTyping",
     "ConfigurationAndScannerTests.ShouldAlertPrintedRefund_AlertsEnabledShippingAndReturnScans",
     "ConfigurationAndScannerTests.ShouldAlertPrintedRefund_UsesRefundStatus",

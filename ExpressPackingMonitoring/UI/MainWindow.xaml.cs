@@ -235,7 +235,7 @@ namespace ExpressPackingMonitoring.UI
                     };
                 }
 
-                Title = AppLanguage.Format("Main.Title", AppVersion.Current);
+                Title = "快递打包监控（双摄版）1.1";
 #if DEBUG
                 Title += " [摄像头对照调试：摄像头不触发录制]";
 #endif

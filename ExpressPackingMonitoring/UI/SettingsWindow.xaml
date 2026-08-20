@@ -1281,6 +1281,32 @@
                                             <ColumnDefinition Width="260"/>
                                         </Grid.ColumnDefinitions>
                                         <StackPanel Margin="0,0,16,0">
+                                            <TextBlock Text="扫描画面旋转" Style="{StaticResource FieldLabelStyle}"/>
+                                            <TextBlock Text="同步旋转实时预览、识别画面、扫描录像和画中画内容"
+                                                       Style="{StaticResource FieldHintStyle}"/>
+                                        </StackPanel>
+                                        <ComboBox x:Name="ScanCameraRotationComboBox"
+                                                  Grid.Column="2"
+                                                  SelectedValue="{Binding Config.ScanCameraRotation}"
+                                                  SelectedValuePath="Tag"
+                                                  SelectionChanged="ScanCameraRotationComboBox_SelectionChanged"
+                                                  VerticalAlignment="Center"
+                                                  MinWidth="150">
+                                            <ComboBoxItem Content="正常（0°）" Tag="0"/>
+                                            <ComboBoxItem Content="顺时针 90°（竖版）" Tag="90"/>
+                                            <ComboBoxItem Content="180°" Tag="180"/>
+                                            <ComboBoxItem Content="顺时针 270°（竖版）" Tag="270"/>
+                                        </ComboBox>
+                                    </Grid>
+
+                                    <Grid Style="{StaticResource SettingRowStyle}"
+                                          IsEnabled="{Binding IsChecked, ElementName=EnableDualCameraCheckBox, TargetNullValue=False}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="24"/>
+                                            <ColumnDefinition Width="260"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Margin="0,0,16,0">
                                             <TextBlock Text="扫描录制时长（秒）" Style="{StaticResource FieldLabelStyle}"/>
                                             <TextBlock Text="扫码触发后扫描摄像头录制多少秒"
                                                        Style="{StaticResource FieldHintStyle}"/>
@@ -1350,23 +1376,21 @@
                                             <ColumnDefinition Width="260"/>
                                         </Grid.ColumnDefinitions>
                                         <StackPanel Margin="0,0,16,0">
-                                            <TextBlock Text="画中画尺寸" Style="{StaticResource FieldLabelStyle}"/>
-                                            <TextBlock Text="扫描画面相对主视频宽度的占比（值越大扫描画面越大）"
+                                            <TextBlock Text="画中画宽度（像素）" Style="{StaticResource FieldLabelStyle}"/>
+                                            <TextBlock Text="输入宽度像素值，高度按扫描视频比例自动计算，如 640"
                                                        Style="{StaticResource FieldHintStyle}"/>
                                         </StackPanel>
-                                        <ComboBox x:Name="PipScaleComboBox"
-                                                  Grid.Column="2"
-                                                  Margin="0"
-                                                  SelectedValuePath="Tag"
-                                                  SelectionChanged="PipScaleComboBox_SelectionChanged"
-                                                  VerticalAlignment="Center"
-                                                  HorizontalAlignment="Left"
-                                                  MinWidth="140"
-                                                  ToolTip="扫描画面相对主视频宽度的占比">
-                                            <ComboBoxItem Content="大（1/2）" Tag="0.5"/>
-                                            <ComboBoxItem Content="特大（2/3）" Tag="0.6667"/>
-                                            <ComboBoxItem Content="极大（3/4）" Tag="0.75"/>
-                                        </ComboBox>
+                                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                            <TextBox x:Name="PipWidthTextBox"
+                                                     Width="110"
+                                                     VerticalAlignment="Center"
+                                                     MaxLength="5"/>
+                                            <TextBlock Text="px"
+                                                       Margin="6,0,0,0"
+                                                       VerticalAlignment="Center"
+                                                       FontSize="12"
+                                                       Foreground="{DynamicResource TextSecondary}"/>
+                                        </StackPanel>
                                     </Grid>
 
                                     <Grid Style="{StaticResource SettingRowStyle}">
@@ -2450,12 +2474,12 @@
                                             <ColumnDefinition Width="260"/>
                                         </Grid.ColumnDefinitions>
                                         <StackPanel Margin="0,0,16,0">
-                                            <TextBlock Text="播报音量最大" Style="{StaticResource FieldLabelStyle}"/>
-                                            <TextBlock Text="每次播报前取消静音并将电脑音量调到最大"
+                                            <TextBlock Text="保持系统音量" Style="{StaticResource FieldLabelStyle}"/>
+                                            <TextBlock Text="打开=播报不修改系统音量；关闭=播报前自动取消静音并调到最大"
                                                        Style="{StaticResource FieldHintStyle}"/>
                                         </StackPanel>
-                                        <CheckBox Grid.Column="2"
-                                                  IsChecked="{Binding Config.MaximizeVolumeForSpeech}"
+                                        <CheckBox x:Name="KeepSystemVolumeCheckBox"
+                                                  Grid.Column="2"
                                                   VerticalAlignment="Center"
                                                   HorizontalAlignment="Left"
                                                   Style="{StaticResource ToggleSwitchStyle}"/>
@@ -3747,7 +3771,7 @@
                                                    RenderOptions.BitmapScalingMode="HighQuality"/>
                                         </Border>
                                         <StackPanel Grid.Column="2" VerticalAlignment="Center">
-                                            <TextBlock Text="快递打包监控"
+                                            <TextBlock Text="快递打包监控（双摄版）"
                                                        FontSize="18"
                                                        FontWeight="SemiBold"
                                                        Foreground="{DynamicResource TextPrimary}"/>
@@ -3803,6 +3827,9 @@
                                                    FontSize="12"
                                                    LineHeight="19">
                                             <Run Text="本项目使用 AGPL-3.0 License 开源"/>
+                                            <LineBreak/>
+                                            <LineBreak/>
+                                            <Run Text="从 https://github.com/PackingProof/PackingProof-Desktop 二次开发而来"/>
                                             <LineBreak/>
                                             <LineBreak/>
                                             <Run Text="个人学习、自家店铺自用可以免费使用"/>

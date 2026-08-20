@@ -22,7 +22,7 @@ public sealed class ReleasePackagingPolicyTests
             string content = File.ReadAllText(
                 Path.Combine(repositoryRoot, relativePath),
                 Encoding.UTF8);
-            Assert.Contains("PackingProof/PackingProof-Desktop", content, StringComparison.Ordinal);
+            Assert.Contains("sddvcm/PackingProof-Desktop", content, StringComparison.Ordinal);
             Assert.DoesNotContain("m-RNA/ExpressPackingMonitoring", content, StringComparison.OrdinalIgnoreCase);
         }
     }

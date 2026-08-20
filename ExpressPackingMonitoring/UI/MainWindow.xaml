@@ -4,7 +4,7 @@
         xmlns:controls="clr-namespace:ExpressPackingMonitoring.UI.Controls"
         xmlns:localization="clr-namespace:ExpressPackingMonitoring.Localization"
         xmlns:vm="clr-namespace:ExpressPackingMonitoring.ViewModels"
-        Title="打包监控" Height="850" Width="1350"
+        Title="快递打包监控（双摄版）1.1" Height="850" Width="1350"
         Background="{DynamicResource WindowBackground}" WindowState="Maximized" Closing="Window_Closing"
         Icon="/app.ico"
         FontFamily="Microsoft YaHei UI, Segoe UI">
@@ -561,7 +561,43 @@
                         </Grid>
                     </Grid>
                     <Border Grid.Row="1" BorderBrush="{DynamicResource BorderDefault}" BorderThickness="0,1,0,0" Padding="0,6,0,0" Margin="0,0,0,6">
-                        <TextBlock Text="本机录制动态" FontSize="18" FontWeight="Black" Foreground="{DynamicResource TextPrimary}"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="本机录制动态" FontSize="18" FontWeight="Black" Foreground="{DynamicResource TextPrimary}" VerticalAlignment="Center"/>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                <Button Command="{Binding RebuildPipCommand}"
+                                        Style="{StaticResource SecondaryButtonStyle}"
+                                        Height="24"
+                                        Padding="8,0"
+                                        Margin="0,0,6,0"
+                                        VerticalAlignment="Center"
+                                        ToolTip="扫描录像目录，为缺少画中画的视频补生成 PIP 视频"
+                                        Cursor="Hand"
+                                        Focusable="False">
+                                    <StackPanel Orientation="Horizontal" IsHitTestVisible="False">
+                                        <Path Data="{StaticResource FluentVideoIcon}" Width="12" Height="12" Stretch="Uniform" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                                        <TextBlock Text="合成画中画" Margin="4,0,0,0" FontSize="11" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                                <Button Command="{Binding ClearActivityLogCommand}"
+                                        Style="{StaticResource SecondaryButtonStyle}"
+                                        Height="24"
+                                        Padding="8,0"
+                                        Margin="0,0,0,0"
+                                        VerticalAlignment="Center"
+                                        ToolTip="清空本机录制动态列表（不影响已保存的视频文件）"
+                                        Cursor="Hand"
+                                        Focusable="False">
+                                    <StackPanel Orientation="Horizontal" IsHitTestVisible="False">
+                                        <Path Data="{StaticResource FluentDeleteIcon}" Width="12" Height="12" Stretch="Uniform" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                                        <TextBlock Text="清除动态记录" Margin="4,0,0,0" FontSize="11" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
+                        </Grid>
                     </Border>
                     <ListView Grid.Row="2" ItemsSource="{Binding FilteredLogs}" AlternationCount="2" BorderThickness="0" Background="{StaticResource TransparentBrush}" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto">
                         <ListView.ItemTemplate>

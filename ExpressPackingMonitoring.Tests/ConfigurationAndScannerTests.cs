@@ -32,9 +32,9 @@ public sealed class ConfigurationAndScannerTests
     }
 
     [Fact]
-    public void AppConfig_MaximizesSpeechVolumeByDefault()
+    public void AppConfig_PreservesSystemVolumeByDefault()
     {
-        Assert.True(new AppConfig().MaximizeVolumeForSpeech);
+        Assert.False(new AppConfig().MaximizeVolumeForSpeech);
     }
 
     [Fact]
@@ -81,6 +81,25 @@ public sealed class ConfigurationAndScannerTests
     }
 
     [Fact]
+    public void AppConfig_InvalidScanRotationFallsBackToZero()
+    {
+        AppConfig config = new() { ScanCameraRotation = 45 };
+
+        Assert.True(AppConfig.NormalizeAfterLoad(config));
+        Assert.Equal(0, config.ScanCameraRotation);
+    }
+
+    [Fact]
+    public void AppConfig_PreservesQuarterTurnScanRotation()
+    {
+        AppConfig config = new() { ScanCameraRotation = 90 };
+
+        AppConfig.NormalizeAfterLoad(config);
+
+        Assert.Equal(90, config.ScanCameraRotation);
+    }
+
+    [Fact]
     public void AppConfig_InvalidWindowCloseBehaviorFallsBackToAsk()
     {
         var config = new AppConfig { WindowCloseBehavior = "Unsupported" };
@@ -90,11 +109,11 @@ public sealed class ConfigurationAndScannerTests
     }
 
     [Fact]
-    public void AppConfig_LegacyJsonEnablesMaximumSpeechVolumeByDefault()
+    public void AppConfig_LegacyJsonPreservesSystemVolumeByDefault()
     {
         AppConfig config = JsonSerializer.Deserialize<AppConfig>("{}")!;
 
-        Assert.True(config.MaximizeVolumeForSpeech);
+        Assert.False(config.MaximizeVolumeForSpeech);
     }
 
     [Fact]

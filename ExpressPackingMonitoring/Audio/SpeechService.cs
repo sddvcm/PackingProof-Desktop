@@ -67,7 +67,8 @@ namespace ExpressPackingMonitoring.Audio
         public int TtsCacheMaxSizeMB { get; set; } = 500;
 
         public bool EnableSoundPrompt { get; set; } = true;
-        public bool MaximizeVolumeForSpeech { get; set; } = true;
+        // true=播报前取消静音并把系统音量调到最大（旧行为）；false=保持系统当前音量。
+        public bool MaximizeVolumeForSpeech { get; set; } = false;
         public bool EnableAiTts { get; set; } = true;
         public string AiTtsEngine { get; set; } = "Edge";
         public int AiTtsSpeakerId { get; set; } = 51;
@@ -247,7 +248,7 @@ namespace ExpressPackingMonitoring.Audio
 
                     try
                     {
-                        MaximizeSystemPlaybackVolume();
+                        ApplyPlaybackVolumePolicy();
 
                         if (req.IsWarning && req.PlayWarningTonePerRepeat && req.RepeatCount > 1)
                         {
@@ -302,7 +303,12 @@ namespace ExpressPackingMonitoring.Audio
             catch (Exception ex) { Debug.WriteLine($"[SpeechService] Thread error: {ex.Message}"); }
         }
 
-        private void MaximizeSystemPlaybackVolume()
+        /// <summary>
+        /// 依据开关决定是否在播报前控制系统音量：
+        /// MaximizeVolumeForSpeech=true 时取消静音并把系统音量调到最大（旧行为）；
+        /// false 时不做任何修改，保持系统当前音量。
+        /// </summary>
+        private void ApplyPlaybackVolumePolicy()
         {
             if (!MaximizeVolumeForSpeech)
                 return;

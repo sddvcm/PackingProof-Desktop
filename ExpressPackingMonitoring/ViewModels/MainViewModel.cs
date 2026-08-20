@@ -553,6 +553,8 @@ namespace ExpressPackingMonitoring.ViewModels
         public double Barcode2CooldownProgress { get => _barcode2CooldownProgress; set => SetProperty(ref _barcode2CooldownProgress, value); }
         public ICommand ClearScanInputCommand { get; }
         public ICommand ClearSearchCommand { get; }
+        public ICommand ClearActivityLogCommand { get; } // 清除右侧"本机录制动态"列表
+        public ICommand RebuildPipCommand { get; } // 为缺少画中画的录像补生成 PIP 视频
         private CancellationTokenSource _barcode1CooldownCts;
         private CancellationTokenSource _barcode2CooldownCts;
         private bool _barcode1OnCooldown;
@@ -672,6 +674,8 @@ namespace ExpressPackingMonitoring.ViewModels
                 SwitchWorkstationCommand = new RelayCommand(() => { });
                 ClearScanInputCommand = new RelayCommand(() => { });
                 ClearSearchCommand = new RelayCommand(() => { });
+                ClearActivityLogCommand = new RelayCommand(() => { });
+                RebuildPipCommand = new RelayCommand(() => { });
                 return;
             }
 
@@ -767,6 +771,8 @@ namespace ExpressPackingMonitoring.ViewModels
             SwitchWorkstationCommand = new RelayCommand(SwitchWorkstation);
             ClearScanInputCommand = new RelayCommand(() => ScanInputText = "");
             ClearSearchCommand = new RelayCommand(() => LogSearchText = "");
+            ClearActivityLogCommand = new RelayCommand(ClearActivityLog);
+            RebuildPipCommand = new RelayCommand(() => _ = RebuildMissingPipVideosAsync());
             InitializeSystem();
             StartUiHeartbeat();
             RefreshBarcodes();
@@ -1071,17 +1077,24 @@ namespace ExpressPackingMonitoring.ViewModels
         {
             try
             {
-                var records = _db?.GetRecentCompletedVideos(DateTime.Today, 20, "pc");
+                var records = _db?.GetRecentCompletedVideos(DateTime.Today, 100, "pc");
                 if (records == null) return;
 
+                // 用户点击过"清除动态记录"后，不再恢复清除时间点之前的记录
+                DateTime? clearedBefore = Config.ActivityLogClearedBeforeUtc?.ToLocalTime();
+
                 _allLogs.Clear();
+                int count = 0;
                 foreach (var record in records)
                 {
+                    if (clearedBefore != null && record.StartTime <= clearedBefore.Value)
+                        continue;
                     _allLogs.Add(new ScanRecord(
                         record.OrderId,
                         "已保存",
                         record.StartTime.ToString("HH:mm:ss"),
                         record.Mode));
+                    if (++count >= 20) break;
                 }
                 FilterLogs();
             }
@@ -1973,6 +1986,162 @@ namespace ExpressPackingMonitoring.ViewModels
 
         private void FilterLogs() { FilteredLogs.Clear(); var keyword = LogSearchText?.ToUpper() ?? ""; foreach (var log in _allLogs) { if (string.IsNullOrEmpty(keyword) || log.OrderId.ToUpper().Contains(keyword)) FilteredLogs.Add(log); } }
         private void AddRecord(ScanRecord record) { Application.Current.Dispatcher.InvokeAsync(() => { _allLogs.Insert(0, record); if (string.IsNullOrEmpty(LogSearchText)) FilteredLogs.Insert(0, record); if (_allLogs.Count > 200) _allLogs.RemoveAt(_allLogs.Count - 1); }); }
+
+        /// <summary>
+        /// 清除右侧"本机录制动态"列表。清除时间点持久化到配置，重启后不会再恢复之前的记录；
+        /// 清除时间点之后新录制的记录会正常显示。
+        /// </summary>
+        private void ClearActivityLog()
+        {
+            Application.Current?.Dispatcher?.InvokeAsync(() =>
+            {
+                _allLogs.Clear();
+                FilteredLogs.Clear();
+                try
+                {
+                    Config.ActivityLogClearedBeforeUtc = DateTime.UtcNow;
+                    SaveConfig();
+                }
+                catch (Exception ex)
+                {
+                    RuntimeLog.Error("ScanHistory", "Failed to persist activity log clear marker", ex);
+                }
+            });
+        }
+
+        private bool _isRebuildingPip;
+
+        /// <summary>
+        /// 手动补合画中画：扫描录像记录，为缺少 .pip.mp4 的视频对（主视频 + 对应 _scan 视频）
+        /// 逐个执行 PIP 合成。仅生成文件，不改动数据库。
+        /// </summary>
+        private async Task RebuildMissingPipVideosAsync()
+        {
+            if (_isRebuildingPip)
+            {
+                ShowToast("正在合成画中画，请稍候", ToastSeverity.Information);
+                return;
+            }
+            _isRebuildingPip = true;
+            try
+            {
+                ShowToast("正在扫描录像...", ToastSeverity.Information);
+                // 收集待合成对：(主视频, 扫描视频)，按主视频路径去重
+                var candidates = new List<(string Main, string Scan)>();
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                try
+                {
+                    var records = _db?.QueryVideos(null, null) ?? new List<VideoRecord>();
+                    foreach (var rec in records)
+                    {
+                        if (string.IsNullOrWhiteSpace(rec.FilePath)) continue;
+                        // 已合成的记录跳过
+                        if (rec.FilePath.EndsWith(".pip.mp4", StringComparison.OrdinalIgnoreCase)) continue;
+
+                        string mainFile = rec.FilePath;
+                        if (!File.Exists(mainFile))
+                        {
+                            // 兼容 MKV/MP4 互换的路径
+                            string altMkv = Path.ChangeExtension(mainFile, ".mkv");
+                            string altMp4 = Path.ChangeExtension(mainFile, ".mp4");
+                            if (File.Exists(altMkv)) mainFile = altMkv;
+                            else if (File.Exists(altMp4)) mainFile = altMp4;
+                            else continue;
+                        }
+                        // 主视频文件名形如 {orderId}_{yyyyMMdd_HHmmss}_{mode}.mp4/.mkv
+                        string name = Path.GetFileName(mainFile);
+                        var m = System.Text.RegularExpressions.Regex.Match(
+                            name,
+                            @"^(?<prefix>.+_\d{8}_\d{6})_[^_]+\.(mp4|mkv)$",
+                            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                        if (!m.Success) continue;
+                        string prefix = m.Groups["prefix"].Value;
+                        string dir = Path.GetDirectoryName(mainFile) ?? "";
+
+                        string scanFile = "";
+                        foreach (string ext in new[] { ".mp4", ".mkv" })
+                        {
+                            string cand = Path.Combine(dir, prefix + "_scan" + ext);
+                            if (File.Exists(cand)) { scanFile = cand; break; }
+                        }
+                        if (string.IsNullOrEmpty(scanFile)) continue;
+
+                        // 目标 pip 文件（与 CompositePipVideo 生成路径一致）
+                        string pipFile = Path.ChangeExtension(mainFile, ".pip.mp4");
+                        if (File.Exists(pipFile)) continue; // 已有合成结果
+
+                        if (seen.Add(mainFile))
+                            candidates.Add((mainFile, scanFile));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    RuntimeLog.Error("PIP", "RebuildMissingPipVideos scan failed", ex);
+                }
+
+                if (candidates.Count == 0)
+                {
+                    ShowToast("未找到需要补合成的录像", ToastSeverity.Information);
+                    return;
+                }
+
+                ShowToast($"找到 {candidates.Count} 个待合成录像，开始补合...", ToastSeverity.Information);
+                RuntimeLog.Info("PIP", $"Rebuild missing PIP: {candidates.Count} candidates");
+
+                int ok = 0, fail = 0;
+                var failReasons = new List<string>();
+                await Task.Run(() =>
+                {
+                    foreach (var (main, scan) in candidates)
+                    {
+                        try
+                        {
+                            string result = CompositePipVideo(main, scan, Config.PipPosition, out string errDetail) ?? "";
+                            if (!string.IsNullOrEmpty(result) && File.Exists(result)) ok++;
+                            else
+                            {
+                                fail++;
+                                if (!string.IsNullOrEmpty(errDetail))
+                                    failReasons.Add($"{Path.GetFileName(main)}: {errDetail}");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            fail++;
+                            failReasons.Add($"{Path.GetFileName(main)}: {ex.Message}");
+                            RuntimeLog.Error("PIP", $"Rebuild failed for {main}", ex);
+                        }
+                    }
+                });
+
+                string msg;
+                if (fail == 0)
+                {
+                    msg = $"画中画补合完成：成功 {ok} 个";
+                }
+                else
+                {
+                    // 显示前 3 条失败原因，便于发现共同模式
+                    var shown = failReasons.Take(3).ToList();
+                    msg = $"画中画补合完成：成功 {ok} 个，失败 {fail} 个";
+                    if (shown.Count > 0)
+                        msg += "\n失败原因：" + string.Join("\n", shown);
+                    if (fail > shown.Count)
+                        msg += $"\n... 还有 {fail - shown.Count} 条失败（见日志）";
+                }
+                ShowToast(msg, fail == 0 ? ToastSeverity.Success : ToastSeverity.Warning);
+                RuntimeLog.Info("PIP", $"Rebuild missing PIP done: ok={ok}, fail={fail}");
+            }
+            catch (Exception ex)
+            {
+                RuntimeLog.Error("PIP", "RebuildMissingPipVideos failed", ex);
+                ShowToast($"补合失败：{ex.Message}", ToastSeverity.Error);
+            }
+            finally
+            {
+                _isRebuildingPip = false;
+            }
+        }
 
         private void LoadConfig() 
         { 
@@ -4202,6 +4371,8 @@ namespace ExpressPackingMonitoring.ViewModels
         {
             try
             {
+                // 在统一入口旋转，保证识别、悬浮预览、独立扫描录像和后续 PIP 使用同一方向。
+                CameraFrameOrientation.Apply(frame, Config.ScanCameraRotation);
                 lock (_scanFrameLock)
                 {
                     _scanLatestFrame?.Dispose();
@@ -4289,7 +4460,7 @@ namespace ExpressPackingMonitoring.ViewModels
 
                 string args = BuildFFmpegArgs(_scanRecordWidth, _scanRecordHeight, _scanRecordFps,
                     _scanRecordingFilePath, GetCpuEncoder(), false, GetVideoCqp());
-                RuntimeLog.Info("ScanRecording", $"Start scan recording: {_scanRecordWidth}x{_scanRecordHeight}@{_scanRecordFps}, file={fileName}");
+                RuntimeLog.Info("ScanRecording", $"Start scan recording: {_scanRecordWidth}x{_scanRecordHeight}@{_scanRecordFps}, rotation={CameraFrameOrientation.Normalize(Config.ScanCameraRotation)}°, file={fileName}");
 
                 var psi = new ProcessStartInfo
                 {
@@ -4487,28 +4658,46 @@ namespace ExpressPackingMonitoring.ViewModels
         /// 返回输出路径（成功）或 null（失败）。
         /// 使用 -an 丢弃音频：主 MKV 可能因音频管道失败而无音频流或音频损坏，
         /// -c:a copy 会导致 PIP 合成失败，故统一丢弃音频（PIP 视频仅用于视觉取证）。
+        /// errorDetail 用于把失败原因（FFmpeg 未找到 / stderr 摘要 / 异常）暴露给调用方，
+        /// 方便批量补合按钮在 UI 上向用户展示具体原因（而不是只显示"失败 N 个"）。
         /// </summary>
-        private string? CompositePipVideo(string mainVideo, string scanVideo, string position)
+        private string? CompositePipVideo(string mainVideo, string scanVideo, string position, out string? errorDetail)
         {
+            errorDetail = null;
             try
             {
                 string ffmpegPath = FindFFmpeg();
                 if (string.IsNullOrEmpty(ffmpegPath))
                 {
+                    errorDetail = "未找到 ffmpeg.exe（publish/tools/ 下缺失或系统 PATH 无 ffmpeg）";
                     RuntimeLog.Warn("PIP", "FFmpeg not found, skipping PIP composite");
                     return null;
                 }
                 if (!File.Exists(mainVideo) || !File.Exists(scanVideo))
                 {
+                    errorDetail = $"输入文件缺失: main={(File.Exists(mainVideo) ? "ok" : "missing")} scan={(File.Exists(scanVideo) ? "ok" : "missing")}";
                     RuntimeLog.Warn("PIP", $"Missing input: main={File.Exists(mainVideo)}, scan={File.Exists(scanVideo)}");
                     return null;
                 }
 
-                // 扫描画面按设置里的比例缩放，默认 1/2，支持 0.1~1.0
-                double pipScale = Config.PipScale > 0.05 && Config.PipScale <= 1.0 ? Config.PipScale : 0.5;
-                int scalePct = Math.Clamp((int)Math.Round(pipScale * 100), 5, 100);
-                // FFmpeg scale 表达式，限制输出宽高为偶数（libx264 要求）
-                string scaleExpr = $"trunc(iw*{scalePct}/100/2)*2:trunc(ih*{scalePct}/100/2)*2";
+                // 画中画宽度：优先使用用户输入的像素宽度（高度按扫描视频宽高比自动计算）；
+                // 未设置（PipWidth=0）时回退到旧的比例缩放，默认 1/2，支持 0.1~1.0。
+                // 注意：scaleExpr 必须是纯 args（不带 "scale=" 前缀），filter_complex 模板
+                // 已自带 "scale=" 前缀。否则会变成 "scale=scale=640:..."，filtergraph 把
+                // 第二个 "scale=" 当作 args 里的 Option 名称，导致 "Option 'scale' not found"。
+                string scaleExpr;
+                if (Config.PipWidth > 0)
+                {
+                    int pipWidth = Math.Clamp(Config.PipWidth, 80, 7680);
+                    scaleExpr = $"{pipWidth}:-1";  // w=pipWidth, h=-1（自动保持宽高比，最基础、最兼容）
+                }
+                else
+                {
+                    double pipScale = Config.PipScale > 0.05 && Config.PipScale <= 1.0 ? Config.PipScale : 0.5;
+                    int scalePct = Math.Clamp((int)Math.Round(pipScale * 100), 5, 100);
+                    // FFmpeg scale 表达式，限制输出宽高为偶数（libx264 要求）
+                    scaleExpr = $"trunc(iw*{scalePct}/100/2)*2:trunc(ih*{scalePct}/100/2)*2";
+                }
                 string overlay = position switch
                 {
                     "TopLeft" => "x=20:y=20",
@@ -4520,11 +4709,13 @@ namespace ExpressPackingMonitoring.ViewModels
                 // 直接输出 MP4 容器，避免额外的 MKV→MP4 转换步骤
                 string pipFile = Path.ChangeExtension(mainVideo, ".pip.mp4");
                 // -an 丢弃音频：主 MKV 可能无音频流或音频损坏，-c:a copy 会导致失败
-                string args = $"-y -i \"{mainVideo}\" -i \"{scanVideo}\" " +
+                // -hide_banner + -loglevel error：让 stderr 只输出真正的错误，
+                //   否则 banner（版本/配置信息约 500 字符）会淹没真实错误信息
+                string args = $"-hide_banner -loglevel error -y -i \"{mainVideo}\" -i \"{scanVideo}\" " +
                     $"-filter_complex \"[1:v]scale={scaleExpr}[bg];[0:v][bg]overlay={overlay}\" " +
                     $"-c:v libx264 -preset fast -crf 25 -an \"{pipFile}\"";
 
-                RuntimeLog.Info("PIP", $"Compositing: {Path.GetFileName(pipFile)}");
+                RuntimeLog.Info("PIP", $"Compositing: {Path.GetFileName(pipFile)} cmd={args}");
 
                 var psi = new ProcessStartInfo
                 {
@@ -4547,7 +4738,9 @@ namespace ExpressPackingMonitoring.ViewModels
                 }
                 if (proc.ExitCode != 0 || !File.Exists(pipFile) || new FileInfo(pipFile).Length == 0)
                 {
-                    RuntimeLog.Warn("PIP", $"FFmpeg overlay exit={proc.ExitCode}, stderr={stderr.Substring(0, Math.Min(500, stderr.Length))}");
+                    errorDetail = stderr.Trim();
+                    if (errorDetail.Length > 800) errorDetail = errorDetail.Substring(0, 800) + "…";
+                    RuntimeLog.Warn("PIP", $"FFmpeg overlay exit={proc.ExitCode}, stderr={stderr.Substring(0, Math.Min(2000, stderr.Length))}");
                     // 清理可能残留的空文件
                     try { if (File.Exists(pipFile)) File.Delete(pipFile); } catch { }
                     return null;
@@ -4557,6 +4750,7 @@ namespace ExpressPackingMonitoring.ViewModels
             }
             catch (Exception ex)
             {
+                errorDetail = ex.Message;
                 RuntimeLog.Error("PIP", "CompositePipVideo failed", ex);
                 return null;
             }
@@ -4570,8 +4764,30 @@ namespace ExpressPackingMonitoring.ViewModels
             {
                 if (_scanPreviewWindow != null && _scanPreviewWindow.IsVisible)
                     return;
-                _scanPreviewWindow = new ScanCameraPreviewWindow();
-                _scanPreviewWindow.Show();
+
+                var win = new ScanCameraPreviewWindow();
+                // 应用上次记录的悬浮窗尺寸（防止越界）
+                if (Config.ScanPreviewWidth >= 160 && Config.ScanPreviewHeight >= 120)
+                {
+                    win.Width = Math.Min(Config.ScanPreviewWidth, 1920);
+                    win.Height = Math.Min(Config.ScanPreviewHeight, 1200);
+                }
+                // 关闭时记忆用户拖拽调整后的尺寸，下次打开软件按此尺寸显示
+                win.Closing += (s, e) =>
+                {
+                    try
+                    {
+                        if (win.ActualWidth > 0 && win.ActualHeight > 0)
+                        {
+                            Config.ScanPreviewWidth = win.ActualWidth;
+                            Config.ScanPreviewHeight = win.ActualHeight;
+                            SaveConfig();
+                        }
+                    }
+                    catch { }
+                };
+                _scanPreviewWindow = win;
+                win.Show();
             }));
         }
 

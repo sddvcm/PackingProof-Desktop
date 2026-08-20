@@ -240,7 +240,7 @@ namespace ExpressPackingMonitoring.ViewModels
                         if (pipSkipReason == null)
                         {
                             RuntimeLog.Info("PIP", $"Starting PIP composite: main={Path.GetFileName(filePath)}, scan={Path.GetFileName(pendingScanFile)}, scanBytes={scanFileBytes}");
-                            string? pipResult = CompositePipVideo(filePath, pendingScanFile, Config.PipPosition);
+                            string? pipResult = CompositePipVideo(filePath, pendingScanFile, Config.PipPosition, out _);
                             if (!string.IsNullOrEmpty(pipResult) && File.Exists(pipResult))
                             {
                                 // PIP 合成成功：DB 指向 PIP MP4
@@ -273,11 +273,15 @@ namespace ExpressPackingMonitoring.ViewModels
                             {
                                 // PIP 合成失败：走下方兜底转换
                                 RuntimeLog.Warn("PIP", $"PIP composite failed, falling back to per-file conversion: {Path.GetFileName(filePath)}");
+                                ShowToast("画中画合成失败，已保留原始视频", ToastSeverity.Warning);
                             }
                         }
                         else
                         {
                             RuntimeLog.Info("PIP", $"PIP skipped: {pipSkipReason}");
+                            // 仅在用户启用过合成但被跳过时提示，避免每次录制都打扰
+                            if (Config.EnablePipComposite)
+                                ShowToast($"画中画已跳过：{pipSkipReason}", ToastSeverity.Warning);
                         }
 
                         if (!pipDone)

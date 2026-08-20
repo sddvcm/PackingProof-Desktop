@@ -16,7 +16,7 @@ internal static class Program
     private const string UpdateUrlKey = "UPDATE_CHECK_URL";
     private const string UpdateFallbackUrlKey = "UPDATE_CHECK_FALLBACK_URL";
     private const string DefaultCheckUrlMetadataKey = "LauncherDefaultUpdateCheckUrl";
-    private const string DefaultPatchDownloadBaseUrl = "https://github.com/PackingProof/PackingProof-Desktop/releases/download";
+    private const string DefaultPatchDownloadBaseUrl = "https://github.com/sddvcm/PackingProof-Desktop/releases/download";
     private const string PatchPackageType = "baseline_patch";
     private const string WaitForProcessExitOption = "--wait-for-process-exit";
     private const string LaunchedByRootLauncherOption = "--launched-by-root-launcher";

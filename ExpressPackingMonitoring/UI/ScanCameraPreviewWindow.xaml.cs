@@ -59,5 +59,28 @@ namespace ExpressPackingMonitoring.UI
         {
             _closing = true;
         }
+
+        /// <summary>
+        /// 最小化到任务栏：悬浮窗默认不显示在任务栏，最小化前临时显示，便于点击恢复。
+        /// </summary>
+        private void MinimizeButton_Click(object sender, RoutedEventArgs e)
+        {
+            ShowInTaskbar = true;
+            WindowState = WindowState.Minimized;
+        }
+
+        private void CloseButton_Click(object sender, RoutedEventArgs e)
+        {
+            Close();
+        }
+
+        /// <summary>
+        /// 从最小化恢复正常后隐藏任务栏图标，保持悬浮窗轻量。
+        /// </summary>
+        private void Window_StateChanged(object sender, EventArgs e)
+        {
+            if (WindowState == WindowState.Normal)
+                ShowInTaskbar = false;
+        }
     }
 }

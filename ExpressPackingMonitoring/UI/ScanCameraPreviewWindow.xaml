@@ -6,18 +6,66 @@
         ResizeMode="CanResize"
         ShowInTaskbar="False"
         Topmost="True"
-        WindowStyle="ToolWindow"
+        WindowStyle="None"
         Background="Black"
+        StateChanged="Window_StateChanged"
         Closing="Window_Closing">
-    <Grid>
-        <Image x:Name="PreviewImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
-        <TextBlock x:Name="StatusLabel"
-                   Text="等待扫描摄像头..."
-                   Foreground="#FFCCCCCC"
-                   FontSize="13"
-                   HorizontalAlignment="Center"
-                   VerticalAlignment="Bottom"
-                   Margin="0,0,0,8"
-                   Visibility="Visible"/>
-    </Grid>
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="30"
+                      ResizeBorderThickness="6"
+                      GlassFrameThickness="0"
+                      CornerRadius="0"
+                      UseAeroCaptionButtons="False"/>
+    </WindowChrome.WindowChrome>
+    <!-- 外层 1px 边框，模拟窗口框 -->
+    <Border BorderBrush="#FF555555" BorderThickness="1">
+        <Grid>
+            <Image x:Name="PreviewImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
+            <TextBlock x:Name="StatusLabel"
+                       Text="等待扫描摄像头..."
+                       Foreground="#FFCCCCCC"
+                       FontSize="13"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Bottom"
+                       Margin="0,0,0,8"
+                       Visibility="Visible"/>
+            <!-- 自绘标题栏：文字 + 分隔线，与 WindowChrome 拖动区重合 -->
+            <Border Height="30"
+                    VerticalAlignment="Top"
+                    Background="#33000000"
+                    BorderBrush="#55FFFFFF"
+                    BorderThickness="0,0,0,1">
+                <TextBlock Text="扫描摄像头"
+                           Foreground="#FFCCCCCC"
+                           FontSize="12"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"/>
+            </Border>
+            <!-- 右上角控制按钮：最小化在左、关闭在右，风格一致 -->
+            <StackPanel Orientation="Horizontal"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Top">
+                <Button x:Name="MinimizeButton"
+                        Content="—"
+                        Width="34" Height="30"
+                        Background="#66000000"
+                        Foreground="White"
+                        BorderThickness="0"
+                        FontSize="15"
+                        ToolTip="最小化"
+                        WindowChrome.IsHitTestVisibleInChrome="True"
+                        Click="MinimizeButton_Click"/>
+                <Button x:Name="CloseButton"
+                        Content="✕"
+                        Width="34" Height="30"
+                        Background="#66000000"
+                        Foreground="White"
+                        BorderThickness="0"
+                        FontSize="13"
+                        ToolTip="关闭"
+                        WindowChrome.IsHitTestVisibleInChrome="True"
+                        Click="CloseButton_Click"/>
+            </StackPanel>
+        </Grid>
+    </Border>
 </Window>

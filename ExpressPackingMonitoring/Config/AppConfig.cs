@@ -174,15 +174,28 @@ namespace ExpressPackingMonitoring.Config
         public int ScanRecordDurationSeconds { get; set; } = 3;
         // 扫描摄像头录制分辨率："480p" | "720p" | "original"
         public string ScanCameraResolution { get; set; } = "480p";
+        // 扫描摄像头画面旋转角度：0、90、180、270。旋转会同步作用于识别、预览和扫描录像。
+        public int ScanCameraRotation { get; set; } = 0;
         // 主录像"开始录制"语音播报延迟（秒），让扫描摄像头先录到面单画面再开始打包。
         public double RecordingSpeechDelaySeconds { get; set; } = 2.0;
 
+        // 扫码悬浮窗记忆尺寸：用户拖拽调整后下次打开软件按此尺寸显示。
+        public double ScanPreviewWidth { get; set; } = 320;
+        public double ScanPreviewHeight { get; set; } = 260;
+
         // 画中画合成：主录制结束后将扫描摄像头视频叠加到主视频角落。
-        public bool EnablePipComposite { get; set; } = false;
+        // 默认开启，目录里会同时保留 主.mp4 / 扫描_scan.mp4 / PIP.pip.mp4；用户可在设置中关闭。
+        public bool EnablePipComposite { get; set; } = true;
         // 画中画位置："TopLeft" | "TopRight" | "BottomLeft" | "BottomRight"
         public string PipPosition { get; set; } = "TopRight";
-        // 画中画扫描画面相对主视频宽度占比（0.1=很窄,1.0=全屏），默认 0.5（1/2）
+        // 画中画扫描画面相对主视频宽度占比（0.1=很窄,1.0=全屏），默认 0.5（1/2）。
+        // 新版设置页改为直接输入像素宽度后，此字段仅作为旧配置回退。
         public double PipScale { get; set; } = 0.5;
+        // 画中画扫描画面宽度（像素），高度按扫描视频宽高比自动计算。0 = 未设置，回退到 PipScale。
+        public int PipWidth { get; set; } = 0;
+
+        // 清除动态记录的时间点（UTC）：清除后重启软件不再恢复该时间点之前的录制动态。
+        public DateTime? ActivityLogClearedBeforeUtc { get; set; }
 
         // 单号查重拦截：关闭时同一单号不可重复录制，扫码命中已存在单号则弹窗拦截。
         public bool AllowDuplicateTrackingNumber { get; set; } = true;
@@ -225,7 +238,8 @@ namespace ExpressPackingMonitoring.Config
         public double MotionDetectThreshold { get; set; } = 15.0;
         public string OrderIdRegex { get; set; } = "^[a-zA-Z0-9-]{12,25}$";
         public bool EnableSoundPrompt { get; set; } = true;
-        public bool MaximizeVolumeForSpeech { get; set; } = true;
+        // 播报时是否把系统音量调到最大：true=播报前取消静音并调最大（旧行为）；false=保持系统当前音量。
+        public bool MaximizeVolumeForSpeech { get; set; } = false;
         public double TimeoutWarningSeconds { get; set; } = 10.0;
         public string Theme { get; set; } = "Auto";
         public string Language { get; set; } = AppLanguage.Auto;
@@ -720,6 +734,15 @@ namespace ExpressPackingMonitoring.Config
             if (config.CameraSameBarcodeConfirmationHits != normalizedCameraSameBarcodeConfirmationHits)
             {
                 config.CameraSameBarcodeConfirmationHits = normalizedCameraSameBarcodeConfirmationHits;
+                changed = true;
+            }
+
+            int normalizedScanRotation = config.ScanCameraRotation is 90 or 180 or 270
+                ? config.ScanCameraRotation
+                : 0;
+            if (config.ScanCameraRotation != normalizedScanRotation)
+            {
+                config.ScanCameraRotation = normalizedScanRotation;
                 changed = true;
             }
 

@@ -16,7 +16,7 @@ internal static class BackupCompatibilityPolicy
     internal const string MobileDownloadUrl =
         "https://gitee.com/PackingProof/PackingProof-Mobile/releases/latest";
     internal const string DesktopDownloadUrl =
-        "https://github.com/PackingProof/PackingProof-Desktop/releases/latest";
+        "https://github.com/sddvcm/PackingProof-Desktop/releases/latest";
 
     internal static BackupCompatibilityInfo CreateHostInfo() => new()
     {
