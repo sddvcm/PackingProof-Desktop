@@ -13,7 +13,7 @@ namespace PackingPipTool;
 
 /// <summary>
 /// 独立的画中画合并工具。
-/// 扫描根目录下所有订单号子目录，对缺 PIP 的（同时存在 *_发货.{mp4,mkv} + *_scan.{mp4,mkv}，
+/// 扫描根目录下所有订单号子目录，对缺 PIP 的（同时存在 *_scan.{mp4,mkv} + 同前缀非 scan 视频，
 /// 且无 *.pip.mp4）依次调用 ffmpeg 合成。
 /// 照搬主项目 MainViewModel.CompositePipVideo 的 filter_complex 写法。
 /// </summary>
@@ -40,8 +40,8 @@ public class MainForm : Form
     public MainForm()
     {
         Text = "合并画中画工具 v1.0";
-        MinimumSize = new Size(900, 600);
-        Size = new Size(1100, 700);
+        MinimumSize = new Size(960, 640);
+        Size = new Size(1100, 720);
         StartPosition = FormStartPosition.CenterScreen;
         Icon = SystemIcons.Application;
 
@@ -58,110 +58,36 @@ public class MainForm : Form
 
     private void BuildUi()
     {
-        // 顶部：根目录
-        var pnlRoot = new TableLayoutPanel
+        Font = new Font("Microsoft YaHei UI", 9);
+
+        // ===== 顶部：根目录 / ffmpeg / 控制区 三行 =====
+        var pnlTop = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
-            Height = 60,
-            ColumnCount = 4,
-            Padding = new Padding(8),
             AutoSize = false,
+            Height = 130,
+            ColumnCount = 1,
+            RowCount = 3,
         };
-        pnlRoot.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 70));
-        pnlRoot.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        pnlRoot.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
-        pnlRoot.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
-        pnlRoot.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
-        pnlRoot.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+        pnlTop.RowStyles.Add(new RowStyle(SizeType.Absolute, 36)); // 根目录
+        pnlTop.RowStyles.Add(new RowStyle(SizeType.Absolute, 36)); // ffmpeg
+        pnlTop.RowStyles.Add(new RowStyle(SizeType.Absolute, 50)); // 控制按钮
+        pnlTop.Controls.Add(MakePathRow("根目录", _txtRoot, _btnBrowseRoot, "选择订单号父目录（其下是一堆订单号子目录）"), 0, 0);
+        pnlTop.Controls.Add(MakePathRow("ffmpeg", _txtFfmpeg, _btnBrowseFfmpeg, "ffmpeg.exe 完整路径（自动探测失败时手选）"), 0, 1);
+        pnlTop.Controls.Add(MakeControlRow(), 0, 2);
 
-        var lblRoot = new Label { Text = "根目录", TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill };
-        _txtRoot.Dock = DockStyle.Fill;
-        _btnBrowseRoot.Text = "浏览...";
-        _btnBrowseRoot.Dock = DockStyle.Fill;
-
-        // 第二行：ffmpeg 路径
-        var pnlFfmpegRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4 };
-        pnlFfmpegRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 70));
-        pnlFfmpegRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        pnlFfmpegRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
-        pnlFfmpegRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
-
-        var lblFfmpeg = new Label { Text = "ffmpeg", TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill };
-        _txtFfmpeg.Dock = DockStyle.Fill;
-        _btnBrowseFfmpeg.Text = "浏览...";
-        _btnBrowseFfmpeg.Dock = DockStyle.Fill;
-        pnlFfmpegRow.Controls.Add(lblFfmpeg, 0, 0);
-        pnlFfmpegRow.Controls.Add(_txtFfmpeg, 1, 0);
-        pnlFfmpegRow.SetColumnSpan(_txtFfmpeg, 2); // 与浏览按钮各占一列
-        pnlFfmpegRow.Controls.Add(_btnBrowseFfmpeg, 3, 0);
-
-        pnlRoot.Controls.Add(lblRoot, 0, 0);
-        pnlRoot.Controls.Add(_txtRoot, 1, 0);
-        pnlRoot.SetColumnSpan(_txtRoot, 2);
-        pnlRoot.Controls.Add(_btnBrowseRoot, 3, 0);
-        pnlRoot.Controls.Add(pnlFfmpegRow, 0, 1);
-        pnlRoot.SetColumnSpan(pnlFfmpegRow, 4);
-
-        // 第二块：控制区
-        var pnlCtrl = new TableLayoutPanel
-        {
-            Dock = DockStyle.Top,
-            Height = 50,
-            ColumnCount = 8,
-            Padding = new Padding(8, 4, 8, 4),
-        };
-        pnlCtrl.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80)); // 扫描
-        pnlCtrl.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 100)); // 开始合并
-        pnlCtrl.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80)); // 停止
-        pnlCtrl.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 20));
-        pnlCtrl.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 70)); // 位置
-        pnlCtrl.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110)); // 位置选择
-        pnlCtrl.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80)); // 宽度
-        pnlCtrl.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-
-        _btnScan.Text = "扫描";
-        _btnScan.Dock = DockStyle.Fill;
-        _btnStart.Text = "开始合并";
-        _btnStart.Dock = DockStyle.Fill;
-        _btnStop.Text = "停止";
-        _btnStop.Dock = DockStyle.Fill;
-        _btnStop.Enabled = false;
-
-        var lblPos = new Label { Text = "PIP 位置", TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill };
-        _cmbPosition.Dock = DockStyle.Fill;
-        _cmbPosition.DropDownStyle = ComboBoxStyle.DropDownList;
-        _cmbPosition.Items.AddRange(new object[]
-        {
-            new ComboItem("左上", "TopLeft"),
-            new ComboItem("右上", "TopRight"),
-            new ComboItem("左下", "BottomLeft"),
-            new ComboItem("右下", "BottomRight"),
-        });
-        _cmbPosition.SelectedIndex = 1; // 默认右上
-
-        var lblW = new Label { Text = "PIP 宽度(像素)", TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill };
-        _txtPipWidth.Dock = DockStyle.Fill;
-        _txtPipWidth.Text = "320";
-
-        pnlCtrl.Controls.Add(_btnScan, 0, 0);
-        pnlCtrl.Controls.Add(_btnStart, 1, 0);
-        pnlCtrl.Controls.Add(_btnStop, 2, 0);
-        pnlCtrl.Controls.Add(lblPos, 4, 0);
-        pnlCtrl.Controls.Add(_cmbPosition, 5, 0);
-        pnlCtrl.Controls.Add(lblW, 6, 0);
-        pnlCtrl.Controls.Add(_txtPipWidth, 7, 0);
-
-        // 底部：进度条 + 状态
+        // ===== 底部：进度条 + 状态 =====
         var pnlBottom = new TableLayoutPanel
         {
             Dock = DockStyle.Bottom,
+            AutoSize = false,
             Height = 50,
             ColumnCount = 1,
             RowCount = 2,
-            Padding = new Padding(8, 4, 8, 4),
+            Padding = new Padding(8, 4, 8, 6),
         };
         pnlBottom.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
-        pnlBottom.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+        pnlBottom.RowStyles.Add(new RowStyle(SizeType.Absolute, 20));
         _lblStatus.Text = "就绪";
         _lblStatus.Dock = DockStyle.Fill;
         _lblStatus.TextAlign = ContentAlignment.MiddleLeft;
@@ -169,7 +95,7 @@ public class MainForm : Form
         pnlBottom.Controls.Add(_lblStatus, 0, 0);
         pnlBottom.Controls.Add(_pb, 0, 1);
 
-        // 中间：ListView + 日志
+        // ===== 中间：SplitContainer（左 ListView，右 日志）=====
         var split = new SplitContainer
         {
             Dock = DockStyle.Fill,
@@ -183,10 +109,10 @@ public class MainForm : Form
         _lv.GridLines = true;
         _lv.Dock = DockStyle.Fill;
         _lv.Columns.Add("订单目录", 160);
-        _lv.Columns.Add("主视频", 240);
+        _lv.Columns.Add("主视频", 260);
         _lv.Columns.Add("扫描视频", 220);
         _lv.Columns.Add("PIP 输出", 240);
-        _lv.Columns.Add("状态", 120);
+        _lv.Columns.Add("状态", 100);
         split.Panel1.Controls.Add(_lv);
 
         _txtLog.Multiline = true;
@@ -197,11 +123,97 @@ public class MainForm : Form
         _txtLog.BackColor = Color.FromArgb(245, 245, 245);
         split.Panel2.Controls.Add(_txtLog);
 
-        // 组装：Fill 在前，Top 在后（dock 顺序）
+        // ===== 组装（Fill 先添加占满，Top/Bottom 压在上面/下面）=====
         Controls.Add(split);
-        Controls.Add(pnlCtrl);
-        Controls.Add(pnlRoot);
+        Controls.Add(pnlTop);
         Controls.Add(pnlBottom);
+    }
+
+    /// <summary>构造一行：[标签] [文本框（自动填剩余宽度）] [浏览按钮]</summary>
+    private static TableLayoutPanel MakePathRow(string label, TextBox tb, Button btn, string tooltip)
+    {
+        var row = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 3,
+            Padding = new Padding(8, 4, 8, 0),
+        };
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
+
+        var lbl = new Label
+        {
+            Text = label,
+            TextAlign = ContentAlignment.MiddleLeft,
+            Dock = DockStyle.Fill,
+        };
+        tb.Dock = DockStyle.Fill;
+        btn.Text = "浏览...";
+        btn.Dock = DockStyle.Fill;
+        var tip = new ToolTip();
+        tip.SetToolTip(tb, tooltip);
+
+        row.Controls.Add(lbl, 0, 0);
+        row.Controls.Add(tb, 1, 0);
+        row.Controls.Add(btn, 2, 0);
+        return row;
+    }
+
+    /// <summary>构造控制行：扫描 / 开始 / 停止 / 位置 / 宽度</summary>
+    private TableLayoutPanel MakeControlRow()
+    {
+        var row = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 7,
+            Padding = new Padding(8, 6, 8, 4),
+        };
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80));   // 扫描
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 100));  // 开始
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80));   // 停止
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 20));   // 间隔
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80));   // 位置标签
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));  // 位置选择
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));   // 宽度区域
+
+        _btnScan.Text = "扫描";
+        _btnScan.Dock = DockStyle.Fill;
+        _btnStart.Text = "开始合并";
+        _btnStart.Dock = DockStyle.Fill;
+        _btnStop.Text = "停止";
+        _btnStop.Dock = DockStyle.Fill;
+        _btnStop.Enabled = false;
+
+        var lblPos = new Label { Text = "PIP 位置", TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill };
+        _cmbPosition.Dock = DockStyle.Fill;
+        _cmbPosition.DropDownStyle = ComboBoxStyle.DropDownList;
+        if (_cmbPosition.Items.Count == 0)
+        {
+            _cmbPosition.Items.Add(new ComboItem("左上", "TopLeft"));
+            _cmbPosition.Items.Add(new ComboItem("右上", "TopRight"));
+            _cmbPosition.Items.Add(new ComboItem("左下", "BottomLeft"));
+            _cmbPosition.Items.Add(new ComboItem("右下", "BottomRight"));
+        }
+        if (_cmbPosition.SelectedIndex < 0) _cmbPosition.SelectedIndex = 1;
+
+        // 宽度子区域：标签 + 输入
+        var pnlW = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2 };
+        pnlW.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
+        pnlW.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        var lblW = new Label { Text = "PIP 宽度(px)", TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill };
+        _txtPipWidth.Dock = DockStyle.Fill;
+        if (string.IsNullOrEmpty(_txtPipWidth.Text)) _txtPipWidth.Text = "320";
+        pnlW.Controls.Add(lblW, 0, 0);
+        pnlW.Controls.Add(_txtPipWidth, 1, 0);
+
+        row.Controls.Add(_btnScan, 0, 0);
+        row.Controls.Add(_btnStart, 1, 0);
+        row.Controls.Add(_btnStop, 2, 0);
+        row.Controls.Add(lblPos, 4, 0);
+        row.Controls.Add(_cmbPosition, 5, 0);
+        row.Controls.Add(pnlW, 6, 0);
+        return row;
     }
 
     private void WireEvents()
@@ -329,20 +341,67 @@ public class MainForm : Form
     private List<CompositeItem> ScanRoot(string root)
     {
         var found = new List<CompositeItem>();
+        int dirsScanned = 0, dirsWithVideo = 0;
+        // 在子线程里 log：要先抓到 InvokeRequired 状态。这里只把消息通过回调回主线程。
+        // 简化：ScanAsync 直接在 UI 线程外跑，主线程 poll 不阻塞（用 Task.Run 后 log 通过 BeginInvoke）
         foreach (string dir in Directory.EnumerateDirectories(root))
         {
+            dirsScanned++;
             try
             {
-                IEnumerable<string> mainCandidates = Directory.EnumerateFiles(dir, "*_发货.mp4", SearchOption.TopDirectoryOnly)
-                    .Concat(Directory.EnumerateFiles(dir, "*_发货.mkv", SearchOption.TopDirectoryOnly));
-                foreach (string main in mainCandidates)
+                // 1. 枚举所有 mp4/mkv，按是否含 "_scan" 分类
+                var scanFiles = new List<string>();
+                var mainFiles = new List<string>();
+                foreach (string ext in new[] { ".mp4", ".mkv" })
                 {
-                    string prefix = ExtractPrefix(main, "_发货");
-                    if (string.IsNullOrEmpty(prefix)) continue;
-                    string? scan = FindScan(dir, prefix);
-                    if (string.IsNullOrEmpty(scan)) continue;
+                    foreach (string f in Directory.EnumerateFiles(dir, "*" + ext, SearchOption.TopDirectoryOnly))
+                    {
+                        string n = Path.GetFileName(f);
+                        if (n.Contains("_scan", StringComparison.OrdinalIgnoreCase))
+                            scanFiles.Add(f);
+                        else
+                            mainFiles.Add(f);
+                    }
+                }
+
+                if (scanFiles.Count == 0 && mainFiles.Count == 0)
+                    continue; // 静默跳过无视频目录
+                dirsWithVideo++;
+                Log($"[{Path.GetFileName(dir)}] scan={scanFiles.Count} main={mainFiles.Count}");
+
+                // 2. 每个 scan 驱动，找同 prefix 的非 scan 视频配对
+                foreach (string scan in scanFiles)
+                {
+                    string scanName = Path.GetFileNameWithoutExtension(scan);
+                    int idx = scanName.LastIndexOf("_scan", StringComparison.OrdinalIgnoreCase);
+                    if (idx <= 0) continue;
+                    string prefix = scanName.Substring(0, idx);
+
+                    string? main = null;
+                    foreach (string m in mainFiles)
+                    {
+                        string mName = Path.GetFileNameWithoutExtension(m);
+                        // 主视频名 = "{prefix}_..."（如 "{prefix}_发货"、"{prefix}_退货"）
+                        if (mName.StartsWith(prefix + "_", StringComparison.OrdinalIgnoreCase) ||
+                            mName.Equals(prefix, StringComparison.OrdinalIgnoreCase))
+                        {
+                            main = m;
+                            break;
+                        }
+                    }
+                    if (main == null)
+                    {
+                        Log($"  无配对主视频：{Path.GetFileName(scan)} (prefix={prefix})");
+                        continue;
+                    }
+
                     string pip = Path.Combine(dir, Path.GetFileNameWithoutExtension(main) + ".pip.mp4");
-                    if (File.Exists(pip)) continue;
+                    if (File.Exists(pip))
+                    {
+                        Log($"  已存在 PIP，跳过：{Path.GetFileName(pip)}");
+                        continue;
+                    }
+
                     found.Add(new CompositeItem
                     {
                         OrderDir = Path.GetFileName(dir),
@@ -357,24 +416,8 @@ public class MainForm : Form
                 Log($"扫描目录 {dir} 失败：{ex.Message}");
             }
         }
+        Log($"扫描统计：共扫描 {dirsScanned} 个子目录，含视频的 {dirsWithVideo} 个，待合并 {found.Count} 个");
         return found;
-    }
-
-    private static string ExtractPrefix(string file, string mode)
-    {
-        string name = Path.GetFileNameWithoutExtension(file);
-        int idx = name.LastIndexOf("_" + mode, StringComparison.OrdinalIgnoreCase);
-        return idx > 0 ? name.Substring(0, idx) : "";
-    }
-
-    private static string? FindScan(string dir, string prefix)
-    {
-        foreach (string ext in new[] { ".mp4", ".mkv" })
-        {
-            string cand = Path.Combine(dir, prefix + "_scan" + ext);
-            if (File.Exists(cand)) return cand;
-        }
-        return null;
     }
 
     private void RefreshList()
