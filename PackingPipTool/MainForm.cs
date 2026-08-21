@@ -242,6 +242,8 @@ public class MainForm : Form
         public FlatButton()
         {
             Font = Control.DefaultFont;
+            // Label 默认 AutoSize=true（按文字大小自调），与 Dock=Fill 冲突会导致文字画到控件外。
+            AutoSize = false;
             TextAlign = ContentAlignment.MiddleCenter;
             BackColor = SystemColors.Control;
             Cursor = Cursors.Hand;
