@@ -23,9 +23,9 @@ public class MainForm : Form
     private readonly Button _btnBrowseRoot = new();
     private readonly TextBox _txtFfmpeg = new();
     private readonly Button _btnBrowseFfmpeg = new();
-    private readonly Button _btnScan = new();
-    private readonly Button _btnStart = new();
-    private readonly Button _btnStop = new();
+    private readonly SafeButton _btnScan = new();
+    private readonly SafeButton _btnStart = new();
+    private readonly SafeButton _btnStop = new();
     private readonly ComboBox _cmbPosition = new();
     private readonly TextBox _txtPipWidth = new();
     private readonly ListView _lv = new();
@@ -83,16 +83,17 @@ public class MainForm : Form
         {
             Dock = DockStyle.Bottom,
             AutoSize = false,
-            Height = 50,
+            Height = 56,
             ColumnCount = 1,
             RowCount = 2,
             Padding = new Padding(8, 4, 8, 6),
         };
+        pnlBottom.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
         pnlBottom.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
-        pnlBottom.RowStyles.Add(new RowStyle(SizeType.Absolute, 20));
         _lblStatus.Text = "就绪";
         _lblStatus.Dock = DockStyle.Fill;
         _lblStatus.TextAlign = ContentAlignment.MiddleLeft;
+        _lblStatus.Padding = new Padding(0, 2, 0, 2);
         _pb.Dock = DockStyle.Fill;
         pnlBottom.Controls.Add(_lblStatus, 0, 0);
         pnlBottom.Controls.Add(_pb, 0, 1);
@@ -231,6 +232,25 @@ public class MainForm : Form
         btn.AutoEllipsis = false;
         btn.MinimumSize = new Size(0, 28);
         btn.Padding = new Padding(4, 2, 4, 2);
+    }
+
+    /// <summary>
+    /// 自定义 Button：跳过 base.OnPaint，用 GDI TextRenderer 画文字（GDI 路径，绕开 self-contained 单文件
+    /// 下 GDI+ Graphics.DrawString 字体缓存损坏的问题，导致按钮文字不显示/乱码）。
+    /// </summary>
+    private sealed class SafeButton : Button
+    {
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            ButtonState state = Enabled ? ButtonState.Normal : ButtonState.Inactive;
+            ControlPaint.DrawButton(e.Graphics, ClientRectangle, state);
+            var flags = TextFormatFlags.HorizontalCenter
+                | TextFormatFlags.VerticalCenter
+                | TextFormatFlags.SingleLine
+                | TextFormatFlags.EndEllipsis;
+            var color = Enabled ? SystemColors.ControlText : SystemColors.GrayText;
+            TextRenderer.DrawText(e.Graphics, Text, Font, ClientRectangle, color, flags);
+        }
     }
 
     private void WireEvents()
@@ -597,8 +617,11 @@ public class MainForm : Form
                 _ => "x=W-w-20:y=20", // TopRight
             };
 
+            // 与主项目略有差异：加 setpts=PTS-STARTPTS 让两个流都从 PTS=0 开始对齐，
+            // 避免历史文件录制起点不一致导致 overlay 时间轴错位（主项目 RebuildMissingPipVideosAsync
+            // 也有这个问题，但用户场景大多在主程序刚录完时调用，差异不显）。
             string args = $"-hide_banner -loglevel error -y -i \"{mainVideo}\" -i \"{scanVideo}\" " +
-                $"-filter_complex \"[1:v]scale={scaleExpr}[bg];[0:v][bg]overlay={overlay}\" " +
+                $"-filter_complex \"[0:v]setpts=PTS-STARTPTS[main];[1:v]setpts=PTS-STARTPTS,scale={scaleExpr}[bg];[main][bg]overlay={overlay}\" " +
                 $"-c:v libx264 -preset fast -crf 25 -an \"{pipFile}\"";
 
             var psi = new ProcessStartInfo
