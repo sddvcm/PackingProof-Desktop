@@ -163,36 +163,61 @@ public class MainForm : Form
         return row;
     }
 
-    /// <summary>构造控制行：扫描 / 开始 / 停止 / 位置 / 宽度</summary>
+    /// <summary>构造控制行：放弃 TableLayoutPanel + Dock=Fill（与 Label PreferredSize 冲突文字会画到控件外），
+    /// 改用普通 Panel + 手动 Location/Size 定位，ClientRectangle 与控件矩形一一对应，文字保证画在按钮内。</summary>
     private TableLayoutPanel MakeControlRow()
     {
         var row = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            ColumnCount = 7,
-            Padding = new Padding(8, 6, 8, 4),
+            ColumnCount = 1,
+            Padding = new Padding(0),
         };
-        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80));   // 扫描
-        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 100));  // 开始
-        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80));   // 停止
-        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 20));   // 间隔
-        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80));   // 位置标签
-        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));  // 位置选择
-        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));   // 宽度区域
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
+        var panel = new Panel
+        {
+            Dock = DockStyle.Fill,
+            Padding = new Padding(0),
+        };
+
+        const int btnH = 30;
+        int y = (56 - btnH) / 2; // pnlTop 第三行高度 56
+        int x = 12;
+        const int gap = 6;
+
+        // 按钮 1：扫描 80 宽
         _btnScan.Text = "扫描";
-        _btnScan.Dock = DockStyle.Fill;
         StyleButton(_btnScan);
-        _btnStart.Text = "开始合并";
-        _btnStart.Dock = DockStyle.Fill;
-        StyleButton(_btnStart);
-        _btnStop.Text = "停止";
-        _btnStop.Dock = DockStyle.Fill;
-        _btnStop.Enabled = false;
-        StyleButton(_btnStop);
+        _btnScan.Bounds = new Rectangle(x, y, 80, btnH);
+        panel.Controls.Add(_btnScan);
+        x += 80 + gap;
 
-        var lblPos = new Label { Text = "PIP 位置", TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill };
-        _cmbPosition.Dock = DockStyle.Fill;
+        // 按钮 2：开始合并 100 宽
+        _btnStart.Text = "开始合并";
+        StyleButton(_btnStart);
+        _btnStart.Bounds = new Rectangle(x, y, 100, btnH);
+        panel.Controls.Add(_btnStart);
+        x += 100 + gap;
+
+        // 按钮 3：停止 70 宽
+        _btnStop.Text = "停止";
+        StyleButton(_btnStop);
+        _btnStop.Bounds = new Rectangle(x, y, 70, btnH);
+        _btnStop.Enabled = false;
+        panel.Controls.Add(_btnStop);
+        x += 70 + gap * 3;
+
+        // PIP 位置标签 + 下拉
+        var lblPos = new Label
+        {
+            Text = "PIP 位置",
+            TextAlign = ContentAlignment.MiddleRight,
+            Bounds = new Rectangle(x, y, 70, btnH),
+        };
+        panel.Controls.Add(lblPos);
+        x += 70;
+
         _cmbPosition.DropDownStyle = ComboBoxStyle.DropDownList;
         if (_cmbPosition.Items.Count == 0)
         {
@@ -202,23 +227,25 @@ public class MainForm : Form
             _cmbPosition.Items.Add(new ComboItem("右下", "BottomRight"));
         }
         if (_cmbPosition.SelectedIndex < 0) _cmbPosition.SelectedIndex = 1;
+        _cmbPosition.Bounds = new Rectangle(x, y, 100, btnH);
+        panel.Controls.Add(_cmbPosition);
+        x += 100 + gap * 3;
 
-        // 宽度子区域：标签 + 输入
-        var pnlW = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2 };
-        pnlW.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
-        pnlW.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        var lblW = new Label { Text = "PIP 宽度(px)", TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill };
-        _txtPipWidth.Dock = DockStyle.Fill;
+        // PIP 宽度标签 + 输入
+        var lblW = new Label
+        {
+            Text = "PIP 宽度(px)",
+            TextAlign = ContentAlignment.MiddleRight,
+            Bounds = new Rectangle(x, y, 90, btnH),
+        };
+        panel.Controls.Add(lblW);
+        x += 90;
+
         if (string.IsNullOrEmpty(_txtPipWidth.Text)) _txtPipWidth.Text = "320";
-        pnlW.Controls.Add(lblW, 0, 0);
-        pnlW.Controls.Add(_txtPipWidth, 1, 0);
+        _txtPipWidth.Bounds = new Rectangle(x, y, 100, btnH);
+        panel.Controls.Add(_txtPipWidth);
 
-        row.Controls.Add(_btnScan, 0, 0);
-        row.Controls.Add(_btnStart, 1, 0);
-        row.Controls.Add(_btnStop, 2, 0);
-        row.Controls.Add(lblPos, 4, 0);
-        row.Controls.Add(_cmbPosition, 5, 0);
-        row.Controls.Add(pnlW, 6, 0);
+        row.Controls.Add(panel, 0, 0);
         return row;
     }
 
