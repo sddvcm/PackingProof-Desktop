@@ -23,9 +23,9 @@ public class MainForm : Form
     private readonly Button _btnBrowseRoot = new();
     private readonly TextBox _txtFfmpeg = new();
     private readonly Button _btnBrowseFfmpeg = new();
-    private readonly SafeButton _btnScan = new();
-    private readonly SafeButton _btnStart = new();
-    private readonly SafeButton _btnStop = new();
+    private readonly FlatButton _btnScan = new();
+    private readonly FlatButton _btnStart = new();
+    private readonly FlatButton _btnStop = new();
     private readonly ComboBox _cmbPosition = new();
     private readonly TextBox _txtPipWidth = new();
     private readonly ListView _lv = new();
@@ -222,34 +222,55 @@ public class MainForm : Form
         return row;
     }
 
-    /// <summary>统一按钮样式：显式字体 + 标准 FlatStyle + 最小高度，避免 GDI 字体渲染异常导致文字不可见</summary>
-    private static void StyleButton(Button btn)
+    /// <summary>Label-based FlatButton：只设字体 + 文字居中，Label 没 FlatStyle/AutoSizeMode 属性</summary>
+    private static void StyleButton(Control btn)
     {
         btn.Font = Control.DefaultFont;
-        btn.TextAlign = ContentAlignment.MiddleCenter;
-        btn.FlatStyle = FlatStyle.Standard;
-        btn.AutoSizeMode = AutoSizeMode.GrowAndShrink;
-        btn.AutoEllipsis = false;
-        btn.MinimumSize = new Size(0, 28);
-        btn.Padding = new Padding(4, 2, 4, 2);
+        if (btn is Label lbl) lbl.TextAlign = ContentAlignment.MiddleCenter;
     }
 
     /// <summary>
-    /// 自定义 Button：跳过 base.OnPaint，用 GDI TextRenderer 画文字（GDI 路径，绕开 self-contained 单文件
-    /// 下 GDI+ Graphics.DrawString 字体缓存损坏的问题，导致按钮文字不显示/乱码）。
+    /// 标签式按钮：继承 Label（Label 的 base.OnPaint 用 GDI TextRenderer 画文字，已验证在
+    /// self-contained 单文件下能正常显示），手动画背景/边框/hover/按下效果。
+    /// 完全绕开 Button 控件的 GDI+ Graphics.DrawString 路径（self-contained 下字体缓存损坏导致空白）。
     /// </summary>
-    private sealed class SafeButton : Button
+    private sealed class FlatButton : Label
     {
+        private bool _hover;
+        private bool _down;
+
+        public FlatButton()
+        {
+            Font = Control.DefaultFont;
+            TextAlign = ContentAlignment.MiddleCenter;
+            BackColor = SystemColors.Control;
+            Cursor = Cursors.Hand;
+            DoubleBuffered = true;
+        }
+
+        protected override void OnMouseEnter(EventArgs e) { base.OnMouseEnter(e); _hover = true; Invalidate(); }
+        protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); _hover = false; _down = false; Invalidate(); }
+        protected override void OnMouseDown(MouseEventArgs e) { base.OnMouseDown(e); if (e.Button == MouseButtons.Left) { _down = true; Invalidate(); } }
+        protected override void OnMouseUp(MouseEventArgs e) { base.OnMouseUp(e); if (e.Button == MouseButtons.Left) { _down = false; Invalidate(); } }
+        protected override void OnEnabledChanged(EventArgs e) { base.OnEnabledChanged(e); Invalidate(); }
+
         protected override void OnPaint(PaintEventArgs e)
         {
-            ButtonState state = Enabled ? ButtonState.Normal : ButtonState.Inactive;
-            ControlPaint.DrawButton(e.Graphics, ClientRectangle, state);
-            var flags = TextFormatFlags.HorizontalCenter
-                | TextFormatFlags.VerticalCenter
-                | TextFormatFlags.SingleLine
-                | TextFormatFlags.EndEllipsis;
-            var color = Enabled ? SystemColors.ControlText : SystemColors.GrayText;
-            TextRenderer.DrawText(e.Graphics, Text, Font, ClientRectangle, color, flags);
+            // 背景（按下深一档，hover 浅一档，禁用灰色）
+            Color bg;
+            if (!Enabled) bg = SystemColors.Control;
+            else if (_down) bg = SystemColors.ControlDark;
+            else if (_hover) bg = SystemColors.ControlLight;
+            else bg = SystemColors.Control;
+            using (var b = new SolidBrush(bg))
+                e.Graphics.FillRectangle(b, ClientRectangle);
+
+            // Label 的 base.OnPaint 用 GDI TextRenderer 画文字（正常显示）
+            base.OnPaint(e);
+
+            // 边框
+            var border = Enabled ? SystemColors.ControlDark : SystemColors.ControlLight;
+            ControlPaint.DrawBorder(e.Graphics, ClientRectangle, border, ButtonBorderStyle.Solid);
         }
     }
 
