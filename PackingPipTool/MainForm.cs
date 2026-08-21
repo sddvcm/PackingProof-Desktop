@@ -226,7 +226,7 @@ public class MainForm : Form
             _cmbPosition.Items.Add(new ComboItem("左下", "BottomLeft"));
             _cmbPosition.Items.Add(new ComboItem("右下", "BottomRight"));
         }
-        if (_cmbPosition.SelectedIndex < 0) _cmbPosition.SelectedIndex = 1;
+        if (_cmbPosition.SelectedIndex < 0) _cmbPosition.SelectedIndex = 0; // 默认左上
         _cmbPosition.Bounds = new Rectangle(x, y, 100, btnH);
         panel.Controls.Add(_cmbPosition);
         x += 100 + gap * 3;
@@ -241,7 +241,7 @@ public class MainForm : Form
         panel.Controls.Add(lblW);
         x += 90;
 
-        if (string.IsNullOrEmpty(_txtPipWidth.Text)) _txtPipWidth.Text = "320";
+        if (string.IsNullOrEmpty(_txtPipWidth.Text)) _txtPipWidth.Text = "640"; // 默认 640px
         _txtPipWidth.Bounds = new Rectangle(x, y, 100, btnH);
         panel.Controls.Add(_txtPipWidth);
 

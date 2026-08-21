@@ -19,9 +19,10 @@
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <!-- 关闭压缩：EnableCompressionInSingleFile 会把 native DLL 延迟解出，破坏 GDI+ 字体句柄，
-         导致 WinForms Button/Label 文字渲染异常（不显示或乱码）。 -->
-    <EnableCompressionInSingleFile>false</EnableCompressionInSingleFile>
+    <!-- 压缩单文件：体积 146MB → 约 63MB。注意：压缩后 native DLL 延迟解压，
+         早期曾导致按钮文字空白，但根因是布局（Dock=Fill 与 Label PreferredSize 冲突），
+         已用手动 Bounds 定位解决，压缩可安全开启。 -->
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <DebugType>embedded</DebugType>
   </PropertyGroup>
 
