@@ -58,7 +58,8 @@ public class MainForm : Form
 
     private void BuildUi()
     {
-        Font = new Font("Microsoft YaHei UI", 9);
+        // 使用系统标准 UI 字体（兼容高 DPI，避免 Button 不继承 Form.Font 时文字不可见）
+        Font = SystemFonts.MessageBoxFont ?? new Font("Microsoft YaHei UI", 9);
 
         // ===== 顶部：根目录 / ffmpeg / 控制区 三行 =====
         var pnlTop = new TableLayoutPanel
@@ -179,11 +180,14 @@ public class MainForm : Form
 
         _btnScan.Text = "扫描";
         _btnScan.Dock = DockStyle.Fill;
+        StyleButton(_btnScan);
         _btnStart.Text = "开始合并";
         _btnStart.Dock = DockStyle.Fill;
+        StyleButton(_btnStart);
         _btnStop.Text = "停止";
         _btnStop.Dock = DockStyle.Fill;
         _btnStop.Enabled = false;
+        StyleButton(_btnStop);
 
         var lblPos = new Label { Text = "PIP 位置", TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill };
         _cmbPosition.Dock = DockStyle.Fill;
@@ -214,6 +218,16 @@ public class MainForm : Form
         row.Controls.Add(_cmbPosition, 5, 0);
         row.Controls.Add(pnlW, 6, 0);
         return row;
+    }
+
+    /// <summary>统一按钮样式：显式字体 + 居中，避免不继承 Form.Font 导致文字不可见</summary>
+    private static void StyleButton(Button btn)
+    {
+        btn.Font = SystemFonts.MessageBoxFont ?? new Font("Microsoft YaHei UI", 9);
+        btn.TextAlign = ContentAlignment.MiddleCenter;
+        btn.UseVisualStyleBackColor = true;
+        btn.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        btn.AutoEllipsis = false;
     }
 
     private void WireEvents()
