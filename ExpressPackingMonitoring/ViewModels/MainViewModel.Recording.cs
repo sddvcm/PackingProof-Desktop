@@ -225,6 +225,8 @@ namespace ExpressPackingMonitoring.ViewModels
                         string? pipSkipReason = null;
                         if (!Config.EnablePipComposite)
                             pipSkipReason = "PIP disabled";
+                        else if (!Config.AutoCompositePip)
+                            pipSkipReason = "manual composite mode (AutoCompositePip=false)";
                         else if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
                             pipSkipReason = $"main file missing ({filePath ?? "null"})";
                         else if (string.IsNullOrEmpty(pendingScanFile) || !File.Exists(pendingScanFile))
@@ -279,8 +281,8 @@ namespace ExpressPackingMonitoring.ViewModels
                         else
                         {
                             RuntimeLog.Info("PIP", $"PIP skipped: {pipSkipReason}");
-                            // 仅在用户启用过合成但被跳过时提示，避免每次录制都打扰
-                            if (Config.EnablePipComposite)
+                            // 仅在用户启用过合成且为自动模式但被跳过时提示，避免每次录制都打扰
+                            if (Config.EnablePipComposite && Config.AutoCompositePip)
                                 ShowToast($"画中画已跳过：{pipSkipReason}", ToastSeverity.Warning);
                         }
 

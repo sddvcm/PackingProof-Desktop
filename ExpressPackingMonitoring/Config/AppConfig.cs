@@ -186,6 +186,9 @@ namespace ExpressPackingMonitoring.Config
         // 画中画合成：主录制结束后将扫描摄像头视频叠加到主视频角落。
         // 默认开启，目录里会同时保留 主.mp4 / 扫描_scan.mp4 / PIP.pip.mp4；用户可在设置中关闭。
         public bool EnablePipComposite { get; set; } = true;
+        // 画中画合并时机：true=自动合并（录制完成立即合成，连续快速发货时可能卡顿）；
+        // false=手动合并（录制完成不合成，发货结束后点主界面「合成画中画」按钮统一补合）。
+        public bool AutoCompositePip { get; set; } = true;
         // 画中画位置："TopLeft" | "TopRight" | "BottomLeft" | "BottomRight"
         public string PipPosition { get; set; } = "TopRight";
         // 画中画扫描画面相对主视频宽度占比（0.1=很窄,1.0=全屏），默认 0.5（1/2）。

@@ -1369,6 +1369,29 @@
                                         </StackPanel>
                                     </Grid>
 
+                                    <Grid Style="{StaticResource SettingRowStyle}"
+                                          IsEnabled="{Binding IsChecked, ElementName=EnablePipCheckBox, TargetNullValue=False}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="24"/>
+                                            <ColumnDefinition Width="260"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Margin="0,0,16,0">
+                                            <TextBlock Text="合并时机" Style="{StaticResource FieldLabelStyle}"/>
+                                            <TextBlock Text="自动=录制完成立即合成，连续快速发货可能卡顿；手动=录完后点主界面「合成画中画」按钮统一补合"
+                                                       Style="{StaticResource FieldHintStyle}"/>
+                                        </StackPanel>
+                                        <ComboBox x:Name="PipCompositeModeComboBox"
+                                                  Grid.Column="2"
+                                                  SelectedValuePath="Tag"
+                                                  VerticalAlignment="Center"
+                                                  HorizontalAlignment="Left"
+                                                  MinWidth="100">
+                                            <ComboBoxItem Content="自动合并" Tag="Auto"/>
+                                            <ComboBoxItem Content="手动合并" Tag="Manual"/>
+                                        </ComboBox>
+                                    </Grid>
+
                                     <Grid Style="{StaticResource SettingRowStyle}">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*"/>

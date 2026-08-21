@@ -630,6 +630,15 @@ namespace ExpressPackingMonitoring.UI
                 PipWidthTextBox.Text = config.PipWidth > 0 ? config.PipWidth.ToString() : "";
             }
 
+            // 同步合并时机：Auto=自动合并（默认），Manual=手动合并
+            if (PipCompositeModeComboBox != null)
+            {
+                string tag = config.AutoCompositePip ? "Auto" : "Manual";
+                PipCompositeModeComboBox.SelectedItem = PipCompositeModeComboBox.Items
+                    .OfType<ComboBoxItem>()
+                    .FirstOrDefault(item => string.Equals(item.Tag as string, tag, StringComparison.OrdinalIgnoreCase));
+            }
+
             // 同步"保持系统音量"开关（打开=保持音量，即关闭播报前调最大）
             if (KeepSystemVolumeCheckBox != null)
             {
@@ -1984,6 +1993,13 @@ namespace ExpressPackingMonitoring.UI
                 {
                     Config.PipWidth = 0;
                 }
+            }
+
+            // 保存合并时机：Auto=自动合并（默认），Manual=手动合并
+            if (PipCompositeModeComboBox?.SelectedItem is ComboBoxItem pipModeItem)
+            {
+                Config.AutoCompositePip = !string.Equals(
+                    pipModeItem.Tag as string, "Manual", StringComparison.OrdinalIgnoreCase);
             }
 
             // 保持系统音量开关：打开=播报不修改系统音量；关闭=播报前自动取消静音并调到最大
