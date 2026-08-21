@@ -19,7 +19,9 @@
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <!-- 关闭压缩：EnableCompressionInSingleFile 会把 native DLL 延迟解出，破坏 GDI+ 字体句柄，
+         导致 WinForms Button/Label 文字渲染异常（不显示或乱码）。 -->
+    <EnableCompressionInSingleFile>false</EnableCompressionInSingleFile>
     <DebugType>embedded</DebugType>
   </PropertyGroup>
 

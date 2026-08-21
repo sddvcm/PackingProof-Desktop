@@ -58,21 +58,22 @@ public class MainForm : Form
 
     private void BuildUi()
     {
-        // 使用系统标准 UI 字体（兼容高 DPI，避免 Button 不继承 Form.Font 时文字不可见）
-        Font = SystemFonts.MessageBoxFont ?? new Font("Microsoft YaHei UI", 9);
+        // 用 WinForms 默认字体（Control.DefaultFont = Segoe UI 9pt），不要在 self-contained 单文件下用 SystemFonts.*，
+        // 压缩模式解出的 native DLL 会破坏 GDI+ 字体句柄，导致 Label/Button 文字渲染异常。
+        Font = Control.DefaultFont;
 
         // ===== 顶部：根目录 / ffmpeg / 控制区 三行 =====
         var pnlTop = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
             AutoSize = false,
-            Height = 130,
+            Height = 140,
             ColumnCount = 1,
             RowCount = 3,
         };
-        pnlTop.RowStyles.Add(new RowStyle(SizeType.Absolute, 36)); // 根目录
-        pnlTop.RowStyles.Add(new RowStyle(SizeType.Absolute, 36)); // ffmpeg
-        pnlTop.RowStyles.Add(new RowStyle(SizeType.Absolute, 50)); // 控制按钮
+        pnlTop.RowStyles.Add(new RowStyle(SizeType.Absolute, 38)); // 根目录
+        pnlTop.RowStyles.Add(new RowStyle(SizeType.Absolute, 38)); // ffmpeg
+        pnlTop.RowStyles.Add(new RowStyle(SizeType.Absolute, 56)); // 控制按钮（加大避免文字被裁）
         pnlTop.Controls.Add(MakePathRow("根目录", _txtRoot, _btnBrowseRoot, "选择订单号父目录（其下是一堆订单号子目录）"), 0, 0);
         pnlTop.Controls.Add(MakePathRow("ffmpeg", _txtFfmpeg, _btnBrowseFfmpeg, "ffmpeg.exe 完整路径（自动探测失败时手选）"), 0, 1);
         pnlTop.Controls.Add(MakeControlRow(), 0, 2);
@@ -220,14 +221,16 @@ public class MainForm : Form
         return row;
     }
 
-    /// <summary>统一按钮样式：显式字体 + 居中，避免不继承 Form.Font 导致文字不可见</summary>
+    /// <summary>统一按钮样式：显式字体 + 标准 FlatStyle + 最小高度，避免 GDI 字体渲染异常导致文字不可见</summary>
     private static void StyleButton(Button btn)
     {
-        btn.Font = SystemFonts.MessageBoxFont ?? new Font("Microsoft YaHei UI", 9);
+        btn.Font = Control.DefaultFont;
         btn.TextAlign = ContentAlignment.MiddleCenter;
-        btn.UseVisualStyleBackColor = true;
+        btn.FlatStyle = FlatStyle.Standard;
         btn.AutoSizeMode = AutoSizeMode.GrowAndShrink;
         btn.AutoEllipsis = false;
+        btn.MinimumSize = new Size(0, 28);
+        btn.Padding = new Padding(4, 2, 4, 2);
     }
 
     private void WireEvents()
